@@ -1,5 +1,4 @@
-import { Ref } from "preact"
-import { useEffect, useRef } from "preact/hooks"
+import { Component, createRef, Ref } from "preact"
 import { EditorState, Extension } from "@codemirror/state"
 import {
   EditorView,
@@ -139,58 +138,78 @@ interface CodeMirrorProps {
   scrollRef?: Ref<HTMLElement>
 }
 
-const CodeMirror = ({
-  value,
-  language,
-  editable,
-  onChange,
-  onScroll,
-  scrollRef,
-}: CodeMirrorProps) => {
-  const hostRef = useRef<HTMLDivElement>(null)
-  const viewRef = useRef<EditorView | null>(null)
-  const changeRef = useRef(onChange)
-  const scrollRefCallback = useRef(onScroll)
+class CodeMirror extends Component<CodeMirrorProps> {
+  private hostRef = createRef<HTMLDivElement>()
+  private view: EditorView | null = null
+  private handleScroll = () => this.props.onScroll?.()
 
-  changeRef.current = onChange
-  scrollRefCallback.current = onScroll
+  override componentDidMount() {
+    this.createView()
+  }
 
-  useEffect(() => {
-    if (!hostRef.current) return
+  override componentDidUpdate(previous: CodeMirrorProps) {
+    if (previous.scrollRef !== this.props.scrollRef && this.view) {
+      setRef(previous.scrollRef, null)
+      setRef(this.props.scrollRef, this.view.scrollDOM)
+    }
+
+    if (
+      previous.language !== this.props.language ||
+      previous.editable !== this.props.editable
+    ) {
+      this.destroyView()
+      this.createView()
+      return
+    }
+
+    this.syncValue()
+  }
+
+  override componentWillUnmount() {
+    this.destroyView()
+  }
+
+  private createView() {
+    if (!this.hostRef.current) return
 
     const view = new EditorView({
-      parent: hostRef.current,
+      parent: this.hostRef.current,
       state: EditorState.create({
-        doc: value,
+        doc: this.props.value,
         extensions: extensions({
-          language,
-          editable,
-          onChange: (next) => changeRef.current?.(next),
+          language: this.props.language,
+          editable: this.props.editable,
+          onChange: (next) => this.props.onChange?.(next),
         }),
       }),
     })
-    const handleScroll = () => scrollRefCallback.current?.()
-    view.scrollDOM.addEventListener("scroll", handleScroll)
-    viewRef.current = view
-    setRef(scrollRef, view.scrollDOM)
+    view.scrollDOM.addEventListener("scroll", this.handleScroll)
+    this.view = view
+    setRef(this.props.scrollRef, view.scrollDOM)
+  }
 
-    return () => {
-      setRef(scrollRef, null)
-      view.scrollDOM.removeEventListener("scroll", handleScroll)
-      view.destroy()
-      viewRef.current = null
-    }
-  }, [language, editable])
+  private destroyView() {
+    if (!this.view) return
 
-  useEffect(() => {
-    const view = viewRef.current
-    if (!view) return
-    const current = view.state.doc.toString()
-    if (current === value) return
-    view.dispatch({ changes: { from: 0, to: current.length, insert: value } })
-  }, [value])
+    setRef(this.props.scrollRef, null)
+    this.view.scrollDOM.removeEventListener("scroll", this.handleScroll)
+    this.view.destroy()
+    this.view = null
+  }
 
-  return <div ref={hostRef} class="h-full w-full" />
+  private syncValue() {
+    if (!this.view) return
+
+    const current = this.view.state.doc.toString()
+    if (current === this.props.value) return
+    this.view.dispatch({
+      changes: { from: 0, to: current.length, insert: this.props.value },
+    })
+  }
+
+  override render() {
+    return <div ref={this.hostRef} class="h-full w-full" />
+  }
 }
 
 interface InputEditorProps {
