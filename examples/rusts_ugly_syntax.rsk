@@ -1,0 +1,18 @@
+use std.fs.File
+use std.io
+use std.io.Read
+use std.path.Path
+
+pub fn read[P: AsRef[Path]](path: P) -> io.Result[Vec[u8]] =
+    fn inner(path: &Path) -> io.Result[Vec[u8]] =
+        let mut file = File.open(path)?
+        let mut bytes = Vec.new()
+        file.read_to_end(&mut bytes)?
+        Ok(bytes)
+
+    inner(path.as_ref())
+
+pub fn main() =
+    let path = std.env.current_exe().expect("current executable path")
+    let bytes = read(path).expect("read current executable")
+    println!("{}", bytes.len())
