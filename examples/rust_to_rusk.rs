@@ -1,0 +1,20 @@
+#[derive(Debug, Clone)]
+pub struct User {
+    pub id: u64,
+    pub name: String,
+}
+
+impl User {
+    pub fn new(id: u64, name: String) -> Self {
+        Self { id, name }
+    }
+
+    pub fn display_name(&self) -> &str {
+        &self.name
+    }
+}
+
+pub fn main() {
+    let user = User::new(1, "Ada".to_string());
+    println!("{}", user.display_name());
+}

@@ -24,6 +24,7 @@ import traitsImpl from "../../examples/traits_impl.rsk?raw"
 import tupleDestructuring from "../../examples/tuple_destructuring.rsk?raw"
 import unsafeBlock from "../../examples/unsafe_block.rsk?raw"
 import whereBounds from "../../examples/where_bounds.rsk?raw"
+import rustToRusk from "../../examples/rust_to_rusk.rs?raw"
 
 export const EXAMPLES = [
   { name: "Hello User", slug: "hello-user", source: helloUser },
@@ -86,10 +87,19 @@ export const EXAMPLES = [
   { name: "Module Layout", slug: "module-layout", source: moduleLayout },
 ] as const
 
+export const RUST_EXAMPLES = [
+  { name: "Rust To Rusk", slug: "rust-to-rusk", source: rustToRusk },
+] as const
+
 export type ExampleName = (typeof EXAMPLES)[number]["name"]
+export type RustExampleName = (typeof RUST_EXAMPLES)[number]["name"]
 
 export const DEFAULT_EXAMPLE_NAME: ExampleName = "Hello User"
+export const DEFAULT_RUST_EXAMPLE_NAME: RustExampleName = "Rust To Rusk"
 export const EXAMPLE_NAMES = EXAMPLES.map(({ name }) => name) as ExampleName[]
+export const RUST_EXAMPLE_NAMES = RUST_EXAMPLES.map(({ name }) =>
+  name
+) as RustExampleName[]
 
 const EXAMPLES_BY_NAME = Object.fromEntries(
   EXAMPLES.map((example) => [example.name, example]),
@@ -99,14 +109,31 @@ const EXAMPLE_NAMES_BY_SLUG = Object.fromEntries(
   EXAMPLES.map((example) => [example.slug, example.name]),
 ) as Record<string, ExampleName>
 
+const RUST_EXAMPLES_BY_NAME = Object.fromEntries(
+  RUST_EXAMPLES.map((example) => [example.name, example]),
+) as Record<RustExampleName, (typeof RUST_EXAMPLES)[number]>
+
+const RUST_EXAMPLE_NAMES_BY_SLUG = Object.fromEntries(
+  RUST_EXAMPLES.map((example) => [example.slug, example.name]),
+) as Record<string, RustExampleName>
+
 export const exampleSource = (name: ExampleName) =>
   EXAMPLES_BY_NAME[name].source
+
+export const rustExampleSource = (name: RustExampleName) =>
+  RUST_EXAMPLES_BY_NAME[name].source
 
 export const examplePath = (name: ExampleName) =>
   `/examples/${EXAMPLES_BY_NAME[name].slug}`
 
+export const rustExamplePath = (name: RustExampleName) =>
+  `/rust-examples/${RUST_EXAMPLES_BY_NAME[name].slug}`
+
 export const exampleNameFromSlug = (slug: string) =>
   EXAMPLE_NAMES_BY_SLUG[slug] ?? null
+
+export const rustExampleNameFromSlug = (slug: string) =>
+  RUST_EXAMPLE_NAMES_BY_SLUG[slug] ?? null
 
 export const exampleNameFromPath = (path: string) => {
   const slug = path.replace(/^#/, "").split("?")[0].match(
@@ -114,4 +141,12 @@ export const exampleNameFromPath = (path: string) => {
   )
     ?.[1]
   return slug ? exampleNameFromSlug(slug) : null
+}
+
+export const rustExampleNameFromPath = (path: string) => {
+  const slug = path.replace(/^#/, "").split("?")[0].match(
+    /^\/rust-examples\/([^/]+)$/,
+  )
+    ?.[1]
+  return slug ? rustExampleNameFromSlug(slug) : null
 }

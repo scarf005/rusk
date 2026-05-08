@@ -2,6 +2,7 @@ import { useEffect, useRef } from "preact/hooks"
 import { computed, signal, useSignal } from "@preact/signals"
 import { useLocation } from "wouter-preact"
 import {
+  convert_rust_to_rusk,
   format_rusk,
   transpile_syntax_tree_json,
   transpile_to_rust,
@@ -10,13 +11,20 @@ import { InputEditor, OutputDisplay } from "./Editor.tsx"
 import { Header, Layout, Main, Panel } from "./Layout.tsx"
 import {
   DEFAULT_EXAMPLE_NAME,
+  DEFAULT_RUST_EXAMPLE_NAME,
   EXAMPLE_NAMES,
   ExampleName,
   exampleNameFromPath,
   examplePath,
   exampleSource,
+  RUST_EXAMPLE_NAMES,
+  RustExampleName,
+  rustExampleNameFromPath,
+  rustExamplePath,
+  rustExampleSource,
 } from "./constants.ts"
 
+type ConvertMode = "rusk-to-rust" | "rust-to-rusk"
 type OutputMode = "rust" | "syntax-tree"
 type RunState = "idle" | "running"
 
@@ -35,29 +43,55 @@ type RunResponse = {
 const isDevServer =
   (import.meta as ImportMeta & { env: { DEV: boolean } }).env.DEV
 
+const convertMode = signal<ConvertMode>("rusk-to-rust")
 const selectedExample = signal<ExampleName>(DEFAULT_EXAMPLE_NAME)
+const selectedRustExample = signal<RustExampleName>(DEFAULT_RUST_EXAMPLE_NAME)
 const inputCode = signal<string>(exampleSource(DEFAULT_EXAMPLE_NAME))
 const outputMode = signal<OutputMode>("rust")
 const runOutput = signal("")
 const runResult = signal<RunResponse | null>(null)
 const runState = signal<RunState>("idle")
 
-const transpiled = computed(() => {
+const converted = computed(() => {
   const started = performance.now()
   try {
+    if (convertMode.value === "rust-to-rusk") {
+      const rusk = convert_rust_to_rusk(inputCode.value)
+      const elapsedMs = performance.now() - started
+      return {
+        rust: "",
+        rusk,
+        syntaxTree: "",
+        rustMs: elapsedMs,
+        ruskMs: elapsedMs,
+        syntaxTreeMs: 0,
+        error: "",
+      }
+    }
+
     const rustStarted = performance.now()
     const rust = transpile_to_rust(inputCode.value)
     const rustMs = performance.now() - rustStarted
     const syntaxTreeStarted = performance.now()
     const syntaxTree = transpile_syntax_tree_json(inputCode.value)
     const syntaxTreeMs = performance.now() - syntaxTreeStarted
-    return { rust, syntaxTree, rustMs, syntaxTreeMs, error: "" }
+    return {
+      rust,
+      rusk: "",
+      syntaxTree,
+      rustMs,
+      ruskMs: 0,
+      syntaxTreeMs,
+      error: "",
+    }
   } catch (error) {
     const elapsedMs = performance.now() - started
     return {
       rust: "",
+      rusk: "",
       syntaxTree: "",
       rustMs: elapsedMs,
+      ruskMs: elapsedMs,
       syntaxTreeMs: elapsedMs,
       error: stringifyError(error),
     }
@@ -65,20 +99,25 @@ const transpiled = computed(() => {
 })
 
 const outputText = computed(() => {
-  if (transpiled.value.error) {
-    return "// Fix the Rusk source to see generated output."
+  if (converted.value.error) {
+    return convertMode.value === "rusk-to-rust"
+      ? "// Fix the Rusk source to see generated output."
+      : "// Fix the Rust source to see generated output."
   }
+  if (convertMode.value === "rust-to-rusk") return converted.value.rusk
   return outputMode.value === "rust"
-    ? transpiled.value.rust
-    : transpiled.value.syntaxTree
+    ? converted.value.rust
+    : converted.value.syntaxTree
 })
 
 const stats = computed(() => ({
   sourceLines: countLines(inputCode.value),
   outputLines: countLines(outputText.value),
-  outputMs: outputMode.value === "rust"
-    ? transpiled.value.rustMs
-    : transpiled.value.syntaxTreeMs,
+  outputMs: convertMode.value === "rust-to-rusk"
+    ? converted.value.ruskMs
+    : outputMode.value === "rust"
+    ? converted.value.rustMs
+    : converted.value.syntaxTreeMs,
 }))
 
 export function App() {
@@ -99,32 +138,57 @@ export function App() {
   }
 
   const showExample = (name: ExampleName) => {
+    convertMode.value = "rusk-to-rust"
     selectedExample.value = name
     setInputCode(exampleSource(name))
     inputRef.current?.scrollTo({ top: 0 })
     outputRef.current?.scrollTo({ top: 0 })
   }
 
+  const showRustExample = (name: RustExampleName) => {
+    convertMode.value = "rust-to-rusk"
+    outputMode.value = "rust"
+    selectedRustExample.value = name
+    setInputCode(rustExampleSource(name))
+    inputRef.current?.scrollTo({ top: 0 })
+    outputRef.current?.scrollTo({ top: 0 })
+  }
+
   useEffect(() => {
     const path = location === "/" ? globalThis.location.pathname : location
-    const name = path === "/" ? DEFAULT_EXAMPLE_NAME : exampleNameFromPath(path)
+    const ruskName = path === "/"
+      ? DEFAULT_EXAMPLE_NAME
+      : exampleNameFromPath(path)
+    const rustName = rustExampleNameFromPath(path)
 
-    if (!name) {
+    if (path === "/") {
       navigate(examplePath(DEFAULT_EXAMPLE_NAME))
       return
     }
 
-    if (path === "/") {
-      navigate(examplePath(name))
+    if (ruskName) {
+      if (
+        convertMode.value === "rusk-to-rust" &&
+        selectedExample.value === ruskName &&
+        inputCode.value === exampleSource(ruskName)
+      ) return
+
+      showExample(ruskName)
       return
     }
 
-    if (
-      selectedExample.value === name &&
-      inputCode.value === exampleSource(name)
-    ) return
+    if (rustName) {
+      if (
+        convertMode.value === "rust-to-rusk" &&
+        selectedRustExample.value === rustName &&
+        inputCode.value === rustExampleSource(rustName)
+      ) return
 
-    showExample(name)
+      showRustExample(rustName)
+      return
+    }
+
+    navigate(examplePath(DEFAULT_EXAMPLE_NAME))
   }, [location, navigate])
 
   const handleScroll = (source: "input" | "output") => {
@@ -155,16 +219,36 @@ export function App() {
     navigate(path)
   }
 
+  const loadRustExample = (name: RustExampleName) => {
+    showRustExample(name)
+    const path = rustExamplePath(name)
+    if (location === path) return
+    navigate(path)
+  }
+
+  const setConvertMode = (mode: ConvertMode) => {
+    if (mode === "rusk-to-rust") loadExample(selectedExample.value)
+    else loadRustExample(selectedRustExample.value)
+  }
+
   const copyOutput = async () => {
     await navigator.clipboard.writeText(outputText.value)
     copied.value = true
     setTimeout(() => copied.value = false, 900)
   }
 
-  const formatInput = () => setInputCode(format_rusk(inputCode.value, 100))
+  const formatInput = () => {
+    if (convertMode.value === "rusk-to-rust") {
+      setInputCode(format_rusk(inputCode.value, 100))
+    }
+  }
 
   const runRust = async () => {
-    if (transpiled.value.error || runState.value === "running") return
+    if (
+      convertMode.value !== "rusk-to-rust" ||
+      converted.value.error ||
+      runState.value === "running"
+    ) return
 
     runState.value = "running"
     runResult.value = null
@@ -173,7 +257,7 @@ export function App() {
       const response = await fetch("/api/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rust: transpiled.value.rust }),
+        body: JSON.stringify({ rust: converted.value.rust }),
       })
       const result = await response.json() as RunResponse | { error: string }
       if ("error" in result) {
@@ -199,20 +283,35 @@ export function App() {
         </div>
 
         <div class="flex-1 flex overflow-x-auto w-full border-b-2 lg:border-b-0 lg:border-r-2 border-black no-scrollbar bg-white">
-          {(["rust", "syntax-tree"] as OutputMode[]).map((mode) => (
+          {(["rusk-to-rust", "rust-to-rusk"] as ConvertMode[]).map((mode) => (
             <button
               type="button"
               key={mode}
-              onClick={() => outputMode.value = mode}
+              onClick={() => setConvertMode(mode)}
               class={`flex-none px-4 md:px-6 py-3 font-bold text-xs md:text-sm uppercase transition-none border-r-2 border-black focus:outline-none whitespace-nowrap ${
-                outputMode.value === mode
+                convertMode.value === mode
                   ? "bg-black text-white"
                   : "bg-white text-black hover:bg-gray-200"
               }`}
             >
-              {mode === "rust" ? "Rust Output" : "Syntax Tree"}
+              {mode === "rusk-to-rust" ? "Rusk → Rust" : "Rust → Rusk"}
             </button>
           ))}
+          {convertMode.value === "rusk-to-rust" &&
+            (["rust", "syntax-tree"] as OutputMode[]).map((mode) => (
+              <button
+                type="button"
+                key={mode}
+                onClick={() => outputMode.value = mode}
+                class={`flex-none px-4 md:px-6 py-3 font-bold text-xs md:text-sm uppercase transition-none border-r-2 border-black focus:outline-none whitespace-nowrap ${
+                  outputMode.value === mode
+                    ? "bg-black text-white"
+                    : "bg-white text-black hover:bg-gray-200"
+                }`}
+              >
+                {mode === "rust" ? "Rust Output" : "Syntax Tree"}
+              </button>
+            ))}
         </div>
 
         <div class="flex-none w-full lg:w-auto flex flex-row border-b-2 lg:border-b-0 border-black bg-white">
@@ -223,14 +322,22 @@ export function App() {
               </span>
             </div>
             <select
-              value={selectedExample.value}
+              value={convertMode.value === "rusk-to-rust"
+                ? selectedExample.value
+                : selectedRustExample.value}
               onChange={(event) =>
-                loadExample(event.currentTarget.value as ExampleName)}
+                convertMode.value === "rusk-to-rust"
+                  ? loadExample(event.currentTarget.value as ExampleName)
+                  : loadRustExample(
+                    event.currentTarget.value as RustExampleName,
+                  )}
               class="appearance-none w-full lg:w-[210px] bg-white pl-14 pr-8 py-3 text-xs md:text-sm font-bold border-none focus:ring-0 cursor-pointer uppercase rounded-none h-full"
             >
-              {EXAMPLE_NAMES.map((name) => (
-                <option key={name} value={name}>{name}</option>
-              ))}
+              {(convertMode.value === "rusk-to-rust"
+                ? EXAMPLE_NAMES
+                : RUST_EXAMPLE_NAMES).map((name) => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
             </select>
             <div class="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
               <svg
@@ -246,9 +353,11 @@ export function App() {
 
       <Main>
         <Panel
-          title={`Rusk Input (${stats.value.sourceLines} lines)`}
+          title={`${
+            convertMode.value === "rusk-to-rust" ? "Rusk" : "Rust"
+          } Input (${stats.value.sourceLines} lines)`}
           class="w-full md:w-1/2 h-1/2 md:h-full"
-          action={
+          action={convertMode.value === "rusk-to-rust" && (
             <button
               type="button"
               onClick={formatInput}
@@ -256,11 +365,12 @@ export function App() {
             >
               Format
             </button>
-          }
+          )}
         >
           <InputEditor
             editorRef={inputRef}
             value={inputCode.value}
+            language={convertMode.value === "rusk-to-rust" ? "rusk" : "rust"}
             onChange={setInputCode}
             onScroll={() => handleScroll("input")}
           />
@@ -269,7 +379,11 @@ export function App() {
         <div class="w-full md:w-1/2 h-1/2 md:h-full flex flex-col min-h-0">
           <Panel
             title={`${
-              outputMode.value === "rust" ? "Rust Output" : "Syntax Tree"
+              convertMode.value === "rust-to-rusk"
+                ? "Rusk Output"
+                : outputMode.value === "rust"
+                ? "Rust Output"
+                : "Syntax Tree"
             } (${stats.value.outputLines} lines, ${
               formatMs(stats.value.outputMs)
             })`}
@@ -277,12 +391,12 @@ export function App() {
             border="border-b-2 border-black"
             action={
               <div class="flex gap-2">
-                {isDevServer && (
+                {isDevServer && convertMode.value === "rusk-to-rust" && (
                   <button
                     type="button"
                     onClick={runRust}
                     disabled={runState.value === "running" ||
-                      !!transpiled.value.error}
+                      !!converted.value.error}
                     class="text-xs uppercase font-bold px-3 py-1 border-2 border-black bg-white hover:bg-black hover:text-white disabled:opacity-50 disabled:hover:bg-white disabled:hover:text-black"
                   >
                     {runState.value === "running" ? "Running" : "▶ Run"}
@@ -301,8 +415,12 @@ export function App() {
             <OutputDisplay
               outputRef={outputRef}
               value={outputText.value}
-              language={outputMode.value === "rust" ? "rust" : "json"}
-              error={transpiled.value.error}
+              language={convertMode.value === "rust-to-rusk"
+                ? "rusk"
+                : outputMode.value === "rust"
+                ? "rust"
+                : "json"}
+              error={converted.value.error}
               onScroll={() => handleScroll("output")}
             />
           </Panel>

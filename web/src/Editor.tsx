@@ -214,6 +214,7 @@ class CodeMirror extends Component<CodeMirrorProps> {
 
 interface InputEditorProps {
   value: string
+  language?: "rusk" | "rust"
   onChange: (value: string) => void
   onScroll?: () => void
   editorRef?: Ref<HTMLElement>
@@ -221,13 +222,14 @@ interface InputEditorProps {
 
 export const InputEditor = ({
   value,
+  language = "rusk",
   onChange,
   onScroll,
   editorRef,
 }: InputEditorProps) => (
   <CodeMirror
     value={value}
-    language="rusk"
+    language={language}
     editable
     onChange={onChange}
     onScroll={onScroll}
@@ -237,7 +239,7 @@ export const InputEditor = ({
 
 interface OutputDisplayProps {
   value: string
-  language: "rust" | "json" | "text"
+  language: "rusk" | "rust" | "json" | "text"
   error?: string
   onScroll?: () => void
   outputRef?: Ref<HTMLElement>

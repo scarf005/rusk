@@ -7,6 +7,7 @@
 ```sh
 rusk input.rsk -o output.rs
 rusk transpile input.rsk --source-map output.map.json
+rusk from-rust input.rs -o output.rsk
 rusk fmt input.rsk -o input.rsk --line-width 100
 cat input.rsk | rusk
 rusk run
@@ -31,6 +32,7 @@ just web # open web editor
 - macro definitions with indentation-based `macro_rules!` arms
 - source formatter that preserves existing line break style; only line width is configurable
 - hierarchical JSON source map generation
+- Rust-to-Rusk conversion for formatted Rust source
 
 ## Example
 
