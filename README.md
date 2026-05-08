@@ -1,6 +1,6 @@
-# rusk
+# Rusk
 
-`rusk` is an MVP source-to-source transpiler for an indentation-based Rust dialect inspired by ML and Scala 3 layout syntax.
+`rusk` is an alternative syntax for [rust](https://rust-lang.org).
 
 ## Usage
 
@@ -12,6 +12,7 @@ cat input.rsk | rusk
 rusk run
 rusk cargo test
 rusk-lsp
+just web # open web editor
 ```
 
 ## Supported MVP syntax
@@ -41,7 +42,6 @@ pub struct User
 
 impl User
     pub fn new(id: u64, name: String) -> Self = Self{ id, name }
-
     pub fn display_name(&self) -> &str = &self.name
 
 pub fn main() =
