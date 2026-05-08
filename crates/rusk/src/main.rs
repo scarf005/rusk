@@ -103,13 +103,8 @@ fn run_cargo_wrapper(raw_args: Vec<String>) -> Result<i32, Box<dyn std::error::E
     };
 
     let root = env::current_dir()?;
-    let generated = transpile_cargo_sources(&root)?;
+    transpile_cargo_sources(&root)?;
     let status = Command::new("cargo").args(&cargo_args).status();
-    let cleanup = cleanup_generated_sources(&generated);
-
-    if let Err(error) = cleanup {
-        return Err(error);
-    }
 
     Ok(status?.code().unwrap_or(1))
 }
@@ -122,10 +117,10 @@ fn transpile_cargo_sources(root: &Path) -> Result<Vec<PathBuf>, Box<dyn std::err
     let mut generated = Vec::new();
     for source_path in sources {
         let rust_path = source_path.with_extension("rs");
-        ensure_can_write_generated(&rust_path)?;
         let source = fs::read_to_string(&source_path)?;
         let output = transpile(&source)?;
-        fs::write(&rust_path, format!("{GENERATED_HEADER}{}", output.rust))?;
+        let rust = format!("{GENERATED_HEADER}{}", output.rust);
+        write_generated_source(&rust_path, &rust)?;
         generated.push(rust_path);
     }
 
@@ -170,33 +165,22 @@ fn collect_rusk_sources_in_dir(
     Ok(())
 }
 
-fn ensure_can_write_generated(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    if !path.exists() {
-        return Ok(());
-    }
-
-    let existing = fs::read_to_string(path)?;
-    if existing.starts_with(GENERATED_HEADER) {
-        Ok(())
-    } else {
-        Err(format!(
-            "refusing to overwrite non-generated Rust file: {}",
-            path.display()
-        )
-        .into())
-    }
-}
-
-fn cleanup_generated_sources(paths: &[PathBuf]) -> Result<(), Box<dyn std::error::Error>> {
-    for path in paths {
-        if !path.exists() {
-            continue;
-        }
+fn write_generated_source(path: &Path, rust: &str) -> Result<(), Box<dyn std::error::Error>> {
+    if path.exists() {
         let existing = fs::read_to_string(path)?;
-        if existing.starts_with(GENERATED_HEADER) {
-            fs::remove_file(path)?;
+        if !existing.starts_with(GENERATED_HEADER) {
+            return Err(format!(
+                "refusing to overwrite non-generated Rust file: {}",
+                path.display()
+            )
+            .into());
+        }
+        if existing == rust {
+            return Ok(());
         }
     }
+
+    fs::write(path, rust)?;
     Ok(())
 }
 
@@ -271,7 +255,7 @@ fn read_source(path: Option<&PathBuf>) -> Result<String, Box<dyn std::error::Err
 
 fn print_help() {
     println!(
-        "rusk - indentation-based Rust syntax transpiler\n\nUSAGE:\n    rusk [transpile] [INPUT.rsk] [-o OUTPUT.rs] [--source-map SOURCE_MAP]\n    rusk fmt [INPUT.rsk] [-o OUTPUT.rsk] [--line-width N]\n    rusk [cargo] <CARGO_COMMAND> [CARGO_ARGS...]\n\nCargo wrapper commands transpile Cargo source roots (*.rsk under src, examples, tests, benches, and build.rsk) to temporary generated .rs files, run cargo, then remove generated files.\n\nExamples:\n    rusk fmt src/main.rsk -o src/main.rsk\n    rusk run\n    rusk cargo fmt\n    rusk cargo test\n\nIf INPUT is omitted, rusk reads Rusk source from stdin when stdin is piped; otherwise it prints this help."
+        "rusk - indentation-based Rust syntax transpiler\n\nUSAGE:\n    rusk [transpile] [INPUT.rsk] [-o OUTPUT.rs] [--source-map SOURCE_MAP]\n    rusk fmt [INPUT.rsk] [-o OUTPUT.rsk] [--line-width N]\n    rusk [cargo] <CARGO_COMMAND> [CARGO_ARGS...]\n\nCargo wrapper commands transpile Cargo source roots (*.rsk under src, examples, tests, benches, and build.rsk) to cached generated .rs files, then run cargo.\n\nExamples:\n    rusk fmt src/main.rsk -o src/main.rsk\n    rusk run\n    rusk cargo fmt\n    rusk cargo test\n\nIf INPUT is omitted, rusk reads Rusk source from stdin when stdin is piped; otherwise it prints this help."
     );
 }
 
@@ -292,22 +276,34 @@ mod tests {
     }
 
     #[test]
-    fn transpiles_cargo_sources_to_generated_rust() {
+    fn transpiles_cargo_sources_to_cached_generated_rust() {
         let project = temp_project("cargo-sources");
-        fs::write(
-            project.join("src/main.rsk"),
-            "pub fn main() =\n    println!(\"hello\")\n",
-        )
-        .unwrap();
+        let source_path = project.join("src/main.rsk");
+        let rust_path = project.join("src/main.rs");
+        fs::write(&source_path, "pub fn main() =\n    println!(\"hello\")\n").unwrap();
 
         let generated = transpile_cargo_sources(&project).unwrap();
-        assert_eq!(generated, vec![project.join("src/main.rs")]);
-        let rust = fs::read_to_string(project.join("src/main.rs")).unwrap();
+        assert_eq!(generated, vec![rust_path.clone()]);
+        let rust = fs::read_to_string(&rust_path).unwrap();
         assert!(rust.starts_with(GENERATED_HEADER));
         assert!(rust.contains("println!(\"hello\");"));
 
-        cleanup_generated_sources(&generated).unwrap();
-        assert!(!project.join("src/main.rs").exists());
+        let mut permissions = fs::metadata(&rust_path).unwrap().permissions();
+        permissions.set_readonly(true);
+        fs::set_permissions(&rust_path, permissions).unwrap();
+        let generated = transpile_cargo_sources(&project).unwrap();
+        assert_eq!(generated, vec![rust_path.clone()]);
+
+        let mut permissions = fs::metadata(&rust_path).unwrap().permissions();
+        permissions.set_readonly(false);
+        fs::set_permissions(&rust_path, permissions).unwrap();
+        fs::write(&source_path, "pub fn main() =\n    println!(\"cached\")\n").unwrap();
+        let generated = transpile_cargo_sources(&project).unwrap();
+        assert_eq!(generated, vec![rust_path.clone()]);
+        let rust = fs::read_to_string(&rust_path).unwrap();
+        assert!(rust.starts_with(GENERATED_HEADER));
+        assert!(rust.contains("println!(\"cached\");"));
+
         let _ = fs::remove_dir_all(project);
     }
 
