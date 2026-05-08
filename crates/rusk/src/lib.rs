@@ -26,6 +26,36 @@ impl fmt::Display for TranspileError {
 
 impl std::error::Error for TranspileError {}
 
+#[cfg(target_arch = "wasm32")]
+mod wasm_api {
+    use wasm_bindgen::prelude::*;
+
+    use super::{TranspileError, source_map_json, transpile};
+
+    #[wasm_bindgen]
+    pub fn transpile_to_rust(source: &str) -> Result<String, JsValue> {
+        transpile(source)
+            .map(|output| output.rust)
+            .map_err(error_to_js_value)
+    }
+
+    #[wasm_bindgen]
+    pub fn transpile_source_map_json(source: &str) -> Result<String, JsValue> {
+        transpile(source)
+            .map(|output| source_map_json(&output.source_map))
+            .map_err(error_to_js_value)
+    }
+
+    #[wasm_bindgen]
+    pub fn rusk_version() -> String {
+        env!("CARGO_PKG_VERSION").to_string()
+    }
+
+    fn error_to_js_value(error: TranspileError) -> JsValue {
+        JsValue::from_str(&error.to_string())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SourceLine {
     line: usize,

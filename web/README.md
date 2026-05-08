@@ -1,19 +1,17 @@
-# Vite + Deno + Preact + TypeScript
+# Rusk Web Demo
+
+A Vite + Deno + Preact demo for `rusk`. The Rust transpiler is compiled to WebAssembly with [`denoland/wasmbuild`](https://github.com/denoland/wasmbuild), then called from Preact Signals for instant browser-side output.
 
 ## Running
 
-You need to have Deno v2.0.0 or later installed to run this repo.
-
-Start a dev server:
-
-```
-$ deno task dev
+```sh
+deno task dev
 ```
 
-## Deploy
+## Build
 
-Build production assets:
+```sh
+deno task build
+```
 
-```
-$ deno task build
-```
+The `wasmbuild` task emits inline browser-compatible bindings to `src/wasm/` before Vite starts or builds.
