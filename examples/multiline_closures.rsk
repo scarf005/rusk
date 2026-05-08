@@ -1,0 +1,11 @@
+pub fn make_scaler(offset: i32) -> impl Fn(i32) -> i32 =
+    move |value|
+        let doubled = value * 2
+        doubled + offset
+
+pub fn demo(value: i32) -> i32 =
+    let adjust = |number|
+        let shifted = number + 1
+        shifted * 3
+    let scale = make_scaler(4)
+    scale(adjust(value))

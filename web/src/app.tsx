@@ -1,14 +1,22 @@
-import { useRef } from "preact/hooks"
+import { useEffect, useRef } from "preact/hooks"
 import { computed, signal, useSignal } from "@preact/signals"
+import { useLocation, useRoute } from "wouter-preact"
 import { transpile_syntax_tree_json, transpile_to_rust } from "./wasm/rusk.js"
 import { InputEditor, OutputDisplay } from "./Editor.tsx"
 import { Header, Layout, Main, Panel } from "./Layout.tsx"
-import { TEMPLATE_NAMES, TemplateName, TEMPLATES } from "./constants.ts"
+import {
+  DEFAULT_EXAMPLE_NAME,
+  EXAMPLE_NAMES,
+  ExampleName,
+  exampleNameFromSlug,
+  examplePath,
+  exampleSource,
+} from "./constants.ts"
 
 type OutputMode = "rust" | "syntax-tree"
 
-const selectedTemplate = signal<TemplateName>("Hello User")
-const inputCode = signal<string>(TEMPLATES[selectedTemplate.value])
+const selectedExample = signal<ExampleName>(DEFAULT_EXAMPLE_NAME)
+const inputCode = signal<string>(exampleSource(DEFAULT_EXAMPLE_NAME))
 const outputMode = signal<OutputMode>("rust")
 
 const transpiled = computed(() => {
@@ -40,10 +48,44 @@ const stats = computed(() => ({
 }))
 
 export function App() {
+  const [location, navigate] = useLocation()
+  const [isExampleRoute, params] = useRoute("/examples/:slug")
   const copied = useSignal(false)
   const inputRef = useRef<HTMLElement>(null)
   const outputRef = useRef<HTMLElement>(null)
   const isScrollingRef = useRef(false)
+
+  const showExample = (name: ExampleName) => {
+    selectedExample.value = name
+    inputCode.value = exampleSource(name)
+    inputRef.current?.scrollTo({ top: 0 })
+    outputRef.current?.scrollTo({ top: 0 })
+  }
+
+  useEffect(() => {
+    const name = isExampleRoute
+      ? exampleNameFromSlug(params?.slug ?? "")
+      : location === "/"
+      ? DEFAULT_EXAMPLE_NAME
+      : null
+
+    if (!name) {
+      navigate(examplePath(DEFAULT_EXAMPLE_NAME))
+      return
+    }
+
+    if (location === "/") {
+      navigate(examplePath(name))
+      return
+    }
+
+    if (
+      selectedExample.value === name &&
+      inputCode.value === exampleSource(name)
+    ) return
+
+    showExample(name)
+  }, [isExampleRoute, location, navigate, params?.slug])
 
   const handleScroll = (source: "input" | "output") => {
     if (isScrollingRef.current) return
@@ -66,11 +108,11 @@ export function App() {
     setTimeout(() => isScrollingRef.current = false, 10)
   }
 
-  const loadTemplate = (name: TemplateName) => {
-    selectedTemplate.value = name
-    inputCode.value = TEMPLATES[name]
-    inputRef.current?.scrollTo({ top: 0 })
-    outputRef.current?.scrollTo({ top: 0 })
+  const loadExample = (name: ExampleName) => {
+    showExample(name)
+    const path = examplePath(name)
+    if (location === path) return
+    navigate(path)
   }
 
   const copyOutput = async () => {
@@ -109,16 +151,16 @@ export function App() {
           <div class="flex-1 lg:flex-none relative border-r-2 border-black">
             <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
               <span class="text-[10px] md:text-xs font-bold uppercase mr-2 opacity-50">
-                TMPL:
+                EXPL:
               </span>
             </div>
             <select
-              value={selectedTemplate.value}
+              value={selectedExample.value}
               onChange={(event) =>
-                loadTemplate(event.currentTarget.value as TemplateName)}
+                loadExample(event.currentTarget.value as ExampleName)}
               class="appearance-none w-full lg:w-[210px] bg-white pl-14 pr-8 py-3 text-xs md:text-sm font-bold border-none focus:ring-0 cursor-pointer uppercase rounded-none h-full"
             >
-              {TEMPLATE_NAMES.map((name) => (
+              {EXAMPLE_NAMES.map((name) => (
                 <option key={name} value={name}>{name}</option>
               ))}
             </select>

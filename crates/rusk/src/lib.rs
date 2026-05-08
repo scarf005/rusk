@@ -403,7 +403,14 @@ fn emit_function_body(nodes: &[Node], returns_value: bool, emitter: &mut Emitter
 fn emit_statement(node: &Node, _context: Context, is_last: bool, emitter: &mut Emitter) {
     let indent = spaces(node.indent);
     let text = node.text.trim();
-    if let Some(expr) = text.strip_prefix("do ") {
+    if !node.children.is_empty() && is_multiline_closure_head(text) {
+        emit_multiline_closure_expr(node, text, is_last, emitter);
+    } else if !node.children.is_empty()
+        && let Some((lhs, rhs)) = split_once_top_level(text, '=')
+        && is_multiline_closure_head(rhs.trim())
+    {
+        emit_multiline_closure_assignment(node, lhs.trim(), rhs.trim(), emitter);
+    } else if let Some(expr) = text.strip_prefix("do ") {
         emitter.push(node, format!("{}{};", indent, lower_expr(expr.trim())));
     } else if is_use_or_extern_crate(text) {
         emitter.push(node, format!("{}{};", indent, lower_signature(text)));
@@ -417,6 +424,23 @@ fn emit_statement(node: &Node, _context: Context, is_last: bool, emitter: &mut E
         let suffix = if is_last { "" } else { ";" };
         emitter.push(node, format!("{}{}{}", indent, lower_expr(text), suffix));
     }
+}
+
+fn emit_multiline_closure_expr(node: &Node, head: &str, is_last: bool, emitter: &mut Emitter) {
+    let indent = spaces(node.indent);
+    emitter.push(node, format!("{}{} {{", indent, lower_expr(head.trim())));
+    emit_nodes(&node.children, Context::Block, emitter);
+    emitter.push_generated(format!("{}}}{}", indent, if is_last { "" } else { ";" }));
+}
+
+fn emit_multiline_closure_assignment(node: &Node, lhs: &str, rhs: &str, emitter: &mut Emitter) {
+    let indent = spaces(node.indent);
+    emitter.push(
+        node,
+        format!("{}{} = {} {{", indent, lower_expr(lhs), lower_expr(rhs)),
+    );
+    emit_nodes(&node.children, Context::Block, emitter);
+    emitter.push_generated(format!("{}}};", indent));
 }
 
 fn emit_struct_member(node: &Node, emitter: &mut Emitter) {
@@ -599,6 +623,18 @@ fn lower_field_or_variant(text: &str) -> String {
 
 fn lower_expr(text: &str) -> String {
     lower_if_then_else(text).unwrap_or_else(|| lower_basic_expr(text))
+}
+
+fn is_multiline_closure_head(text: &str) -> bool {
+    let closure = text.trim().strip_prefix("move ").unwrap_or(text.trim());
+    let Some(rest) = closure.strip_prefix('|') else {
+        return false;
+    };
+    let Some(end) = rest.find('|') else {
+        return false;
+    };
+    let tail = rest[end + 1..].trim();
+    tail.is_empty() || tail.starts_with("->")
 }
 
 fn lower_basic_expr(text: &str) -> String {
@@ -1259,6 +1295,42 @@ pub fn id(value: i32) -> i32 =
 }
 pub fn id(value: i32) -> i32 {
     value
+}
+"#
+        );
+    }
+
+    #[test]
+    fn lowers_multiline_closures() {
+        let source = r#"
+pub fn make_scaler(offset: i32) -> impl Fn(i32) -> i32 =
+    move |value|
+        let doubled = value * 2
+        doubled + offset
+
+pub fn demo(value: i32) -> i32 =
+    let adjust = |number|
+        let shifted = number + 1
+        shifted * 3
+    let scale = make_scaler(4)
+    scale(adjust(value))
+"#;
+
+        assert_eq!(
+            rust(source),
+            r#"pub fn make_scaler(offset: i32) -> impl Fn(i32) -> i32 {
+    move |value| {
+        let doubled = value * 2;
+        doubled + offset
+    }
+}
+pub fn demo(value: i32) -> i32 {
+    let adjust = |number| {
+        let shifted = number + 1;
+        shifted * 3
+    };
+    let scale = make_scaler(4);
+    scale(adjust(value))
 }
 "#
         );

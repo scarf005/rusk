@@ -11,6 +11,7 @@ import iteratorChaining from "../../examples/iterator_chaining.rsk?raw"
 import lifetimes from "../../examples/lifetimes.rsk?raw"
 import macros from "../../examples/macros.rsk?raw"
 import moduleLayout from "../../examples/module_layout.rsk?raw"
+import multilineClosures from "../../examples/multiline_closures.rsk?raw"
 import nestedModules from "../../examples/nested_modules.rsk?raw"
 import optionResult from "../../examples/option_result.rsk?raw"
 import pathsAndAttributes from "../../examples/paths_and_attributes.rsk?raw"
@@ -23,33 +24,80 @@ import tupleDestructuring from "../../examples/tuple_destructuring.rsk?raw"
 import unsafeBlock from "../../examples/unsafe_block.rsk?raw"
 import whereBounds from "../../examples/where_bounds.rsk?raw"
 
-export const TEMPLATES = {
-  "Hello User": helloUser,
-  Generics: generics,
-  Lifetimes: lifetimes,
-  "Const Generics": constGenerics,
-  "Array Subscription": arraySubscription,
-  "Complex Ambiguous": complexAmbiguous,
-  "Pattern Matching": patternMatchingComplex,
-  "Iterator Chaining": iteratorChaining,
-  Macros: macros,
-  "Option Result": optionResult,
-  "Tuple Destructuring": tupleDestructuring,
-  "String Parsing": stringParsing,
-  Closures: closures,
-  "Async Functions": asyncFunctions,
-  "Unsafe Block": unsafeBlock,
-  "Nested Modules": nestedModules,
-  "Where Bounds": whereBounds,
-  "Enum Match": enumMatch,
-  "Traits Impl": traitsImpl,
-  "Control Flow": controlFlow,
-  "Paths Attributes": pathsAndAttributes,
-  "Raw Strings": rawStrings,
-  "Result Flow": resultFlow,
-  "Module Layout": moduleLayout,
-} as const
+export const EXAMPLES = [
+  { name: "Hello User", slug: "hello-user", source: helloUser },
+  { name: "Generics", slug: "generics", source: generics },
+  { name: "Lifetimes", slug: "lifetimes", source: lifetimes },
+  { name: "Const Generics", slug: "const-generics", source: constGenerics },
+  {
+    name: "Array Subscription",
+    slug: "array-subscription",
+    source: arraySubscription,
+  },
+  {
+    name: "Complex Ambiguous",
+    slug: "complex-ambiguous",
+    source: complexAmbiguous,
+  },
+  {
+    name: "Pattern Matching",
+    slug: "pattern-matching",
+    source: patternMatchingComplex,
+  },
+  {
+    name: "Iterator Chaining",
+    slug: "iterator-chaining",
+    source: iteratorChaining,
+  },
+  { name: "Macros", slug: "macros", source: macros },
+  { name: "Option Result", slug: "option-result", source: optionResult },
+  {
+    name: "Tuple Destructuring",
+    slug: "tuple-destructuring",
+    source: tupleDestructuring,
+  },
+  { name: "String Parsing", slug: "string-parsing", source: stringParsing },
+  { name: "Closures", slug: "closures", source: closures },
+  {
+    name: "Multiline Closures",
+    slug: "multiline-closures",
+    source: multilineClosures,
+  },
+  { name: "Async Functions", slug: "async-functions", source: asyncFunctions },
+  { name: "Unsafe Block", slug: "unsafe-block", source: unsafeBlock },
+  { name: "Nested Modules", slug: "nested-modules", source: nestedModules },
+  { name: "Where Bounds", slug: "where-bounds", source: whereBounds },
+  { name: "Enum Match", slug: "enum-match", source: enumMatch },
+  { name: "Traits Impl", slug: "traits-impl", source: traitsImpl },
+  { name: "Control Flow", slug: "control-flow", source: controlFlow },
+  {
+    name: "Paths Attributes",
+    slug: "paths-attributes",
+    source: pathsAndAttributes,
+  },
+  { name: "Raw Strings", slug: "raw-strings", source: rawStrings },
+  { name: "Result Flow", slug: "result-flow", source: resultFlow },
+  { name: "Module Layout", slug: "module-layout", source: moduleLayout },
+] as const
 
-export type TemplateName = keyof typeof TEMPLATES
+export type ExampleName = (typeof EXAMPLES)[number]["name"]
 
-export const TEMPLATE_NAMES = Object.keys(TEMPLATES) as TemplateName[]
+export const DEFAULT_EXAMPLE_NAME: ExampleName = "Hello User"
+export const EXAMPLE_NAMES = EXAMPLES.map(({ name }) => name) as ExampleName[]
+
+const EXAMPLES_BY_NAME = Object.fromEntries(
+  EXAMPLES.map((example) => [example.name, example]),
+) as Record<ExampleName, (typeof EXAMPLES)[number]>
+
+const EXAMPLE_NAMES_BY_SLUG = Object.fromEntries(
+  EXAMPLES.map((example) => [example.slug, example.name]),
+) as Record<string, ExampleName>
+
+export const exampleSource = (name: ExampleName) =>
+  EXAMPLES_BY_NAME[name].source
+
+export const examplePath = (name: ExampleName) =>
+  `/examples/${EXAMPLES_BY_NAME[name].slug}`
+
+export const exampleNameFromSlug = (slug: string) =>
+  EXAMPLE_NAMES_BY_SLUG[slug] ?? null
