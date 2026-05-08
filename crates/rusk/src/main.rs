@@ -32,13 +32,13 @@ fn run(raw_args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     let output = transpile(&source)?;
 
     if let Some(path) = args.output {
-        fs::write(path, output.rust)?;
+        fs::write(path, &output.rust)?;
     } else {
-        print!("{}", output.rust);
+        print!("{}", &output.rust);
     }
 
     if let Some(path) = args.source_map {
-        fs::write(path, source_map_json(&output.source_map))?;
+        fs::write(path, source_map_json(&output))?;
     }
 
     Ok(())

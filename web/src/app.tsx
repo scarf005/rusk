@@ -1,11 +1,11 @@
 import { useRef } from "preact/hooks"
 import { computed, signal, useSignal } from "@preact/signals"
-import { transpile_source_map_json, transpile_to_rust } from "./wasm/rusk.js"
+import { transpile_syntax_tree_json, transpile_to_rust } from "./wasm/rusk.js"
 import { InputEditor, OutputDisplay } from "./Editor.tsx"
 import { Header, Layout, Main, Panel } from "./Layout.tsx"
 import { TEMPLATE_NAMES, TemplateName, TEMPLATES } from "./constants.ts"
 
-type OutputMode = "rust" | "source-map"
+type OutputMode = "rust" | "syntax-tree"
 
 const selectedTemplate = signal<TemplateName>("Hello User")
 const inputCode = signal<string>(TEMPLATES[selectedTemplate.value])
@@ -14,12 +14,12 @@ const outputMode = signal<OutputMode>("rust")
 const transpiled = computed(() => {
   try {
     const rust = transpile_to_rust(inputCode.value)
-    const sourceMap = transpile_source_map_json(inputCode.value)
-    return { rust, sourceMap, error: "" }
+    const syntaxTree = transpile_syntax_tree_json(inputCode.value)
+    return { rust, syntaxTree, error: "" }
   } catch (error) {
     return {
       rust: "",
-      sourceMap: "",
+      syntaxTree: "",
       error: stringifyError(error),
     }
   }
@@ -31,7 +31,7 @@ const outputText = computed(() => {
   }
   return outputMode.value === "rust"
     ? transpiled.value.rust
-    : transpiled.value.sourceMap
+    : transpiled.value.syntaxTree
 })
 
 const stats = computed(() => ({
@@ -89,7 +89,7 @@ export function App() {
         </div>
 
         <div class="flex-1 flex overflow-x-auto w-full border-b-2 lg:border-b-0 lg:border-r-2 border-black no-scrollbar bg-white">
-          {["rust", "source-map"].map((mode) => (
+          {["rust", "syntax-tree"].map((mode) => (
             <button
               type="button"
               key={mode}
@@ -100,7 +100,7 @@ export function App() {
                   : "bg-white text-black hover:bg-gray-200"
               }`}
             >
-              {mode === "rust" ? "Rust Output" : "Source Map"}
+              {mode === "rust" ? "Rust Output" : "Syntax Tree"}
             </button>
           ))}
         </div>
@@ -149,7 +149,7 @@ export function App() {
 
         <Panel
           title={`${
-            outputMode.value === "rust" ? "Rust Output" : "Source Map"
+            outputMode.value === "rust" ? "Rust Output" : "Syntax Tree"
           } (${stats.value.outputLines} lines)`}
           class="w-full md:w-1/2"
           action={

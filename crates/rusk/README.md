@@ -15,13 +15,14 @@ cat input.rsk | rusk
 - indentation blocks for `struct`, `enum`, `trait`, `impl`, `mod`, `fn`, `if`, `else`, `match`, loops, `unsafe`, and `async`
 - function bodies with `=`
 - `if condition then expr else expr` expressions
+- Rust-style inline struct literals, e.g. `Self{ id, name }`
 - `do expr` for semicolon/discard statements
 - Rust-style `#[...]` / `#![...]` attributes
 - Scala-style generic brackets in type positions, e.g. `Result[T, E]` -> `Result<T, E>`
 - method generic calls, e.g. `value.parse[i32]()` -> `value.parse::<i32>()`
 - dotted path lowering for type paths and obvious item paths, e.g. `std.io.Read` -> `std::io::Read`, `Foo.new()` -> `Foo::new()`
 - escape hatch: existing Rust `::` syntax is preserved
-- line-oriented JSON source map generation
+- hierarchical JSON source map generation
 
 ## Example
 
@@ -32,10 +33,7 @@ pub struct User
     pub name: String
 
 impl User
-    pub fn new(id: u64, name: String) -> Self =
-        Self
-            id = id
-            name = name
+    pub fn new(id: u64, name: String) -> Self = Self{ id, name }
 
     pub fn display_name(&self) -> &str = &self.name
 
@@ -54,10 +52,7 @@ pub struct User {
 }
 impl User {
     pub fn new(id: u64, name: String) -> Self {
-        Self {
-            id: id,
-            name: name,
-        }
+        Self{ id, name }
     }
     pub fn display_name(&self) -> &str {
         &self.name

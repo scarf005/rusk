@@ -1,0 +1,8 @@
+pub fn parse_port(raw: &str) -> Result[u16, std.num.ParseIntError] =
+    let port = raw.parse[u16]()
+    Ok(port)
+
+pub fn main() =
+    match parse_port("8080")
+        Ok(port) => do println!("listening on {port}")
+        Err(error) => do eprintln!("invalid port: {error}")

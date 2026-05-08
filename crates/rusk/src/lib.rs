@@ -7,9 +7,21 @@ pub struct SourceMapEntry {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceMapNode {
+    pub kind: String,
+    pub source_line: usize,
+    pub source_indent: usize,
+    pub source_text: String,
+    pub generated_start_line: usize,
+    pub generated_end_line: usize,
+    pub children: Vec<SourceMapNode>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TranspileOutput {
     pub rust: String,
     pub source_map: Vec<SourceMapEntry>,
+    pub source_tree: Vec<SourceMapNode>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,9 +52,9 @@ mod wasm_api {
     }
 
     #[wasm_bindgen]
-    pub fn transpile_source_map_json(source: &str) -> Result<String, JsValue> {
+    pub fn transpile_syntax_tree_json(source: &str) -> Result<String, JsValue> {
         transpile(source)
-            .map(|output| source_map_json(&output.source_map))
+            .map(|output| source_map_json(&output))
             .map_err(error_to_js_value)
     }
 
@@ -81,6 +93,8 @@ enum Context {
 struct Emitter {
     lines: Vec<String>,
     source_map: Vec<SourceMapEntry>,
+    source_tree: Vec<SourceMapNode>,
+    tree_stack: Vec<SourceMapNode>,
 }
 
 pub fn transpile(source: &str) -> Result<TranspileOutput, TranspileError> {
@@ -98,24 +112,65 @@ pub fn transpile(source: &str) -> Result<TranspileOutput, TranspileError> {
     Ok(TranspileOutput {
         rust: ensure_trailing_newline(&emitter.lines.join("\n")),
         source_map: emitter.source_map,
+        source_tree: emitter.source_tree,
     })
 }
 
-pub fn source_map_json(entries: &[SourceMapEntry]) -> String {
-    let body = entries
-        .iter()
-        .map(|entry| {
-            format!(
-                "    {{ \"source_line\": {}, \"generated_line\": {} }}",
-                entry.source_line, entry.generated_line
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(",\n");
+pub fn source_map_json(output: &TranspileOutput) -> String {
     format!(
-        "{{\n  \"version\": 1,\n  \"entries\": [\n{}\n  ]\n}}\n",
-        body
+        "{{\n  \"version\": 2,\n  \"format\": \"rusk.syntax-tree\",\n  \"tree\": [\n{}\n  ]\n}}\n",
+        source_map_nodes_json(&output.source_tree, 2)
     )
+}
+
+fn source_map_nodes_json(nodes: &[SourceMapNode], indent: usize) -> String {
+    nodes
+        .iter()
+        .map(|node| source_map_node_json(node, indent))
+        .collect::<Vec<_>>()
+        .join(",\n")
+}
+
+fn source_map_node_json(node: &SourceMapNode, indent: usize) -> String {
+    let pad = spaces(indent * 2);
+    let child_pad = spaces((indent + 1) * 2);
+    let children = if node.children.is_empty() {
+        "[]".to_string()
+    } else {
+        format!(
+            "[\n{}\n{child_pad}]",
+            source_map_nodes_json(&node.children, indent + 2)
+        )
+    };
+
+    format!(
+        "{pad}{{\n{child_pad}\"kind\": \"{}\",\n{child_pad}\"source\": {{ \"line\": {}, \"indent\": {}, \"text\": \"{}\" }},\n{child_pad}\"generated\": {{ \"start_line\": {}, \"end_line\": {} }},\n{child_pad}\"children\": {}\n{pad}}}",
+        escape_json(&node.kind),
+        node.source_line,
+        node.source_indent,
+        escape_json(&node.source_text),
+        node.generated_start_line,
+        node.generated_end_line,
+        children
+    )
+}
+
+fn escape_json(text: &str) -> String {
+    let mut escaped = String::new();
+    for character in text.chars() {
+        match character {
+            '\\' => escaped.push_str("\\\\"),
+            '"' => escaped.push_str("\\\""),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            character if character.is_control() => {
+                escaped.push_str(&format!("\\u{:04x}", character as u32));
+            }
+            character => escaped.push(character),
+        }
+    }
+    escaped
 }
 
 fn source_lines(source: &str) -> Result<Vec<SourceLine>, TranspileError> {
@@ -190,6 +245,12 @@ fn emit_nodes(nodes: &[Node], context: Context, emitter: &mut Emitter) {
 }
 
 fn emit_node(node: &Node, context: Context, is_last: bool, emitter: &mut Emitter) {
+    emitter.begin_node(node, classify_node(node, context));
+    emit_node_body(node, context, is_last, emitter);
+    emitter.end_node();
+}
+
+fn emit_node_body(node: &Node, context: Context, is_last: bool, emitter: &mut Emitter) {
     let text = node.text.trim();
     if text.starts_with("//") {
         emitter.push(node, text.to_string());
@@ -207,6 +268,61 @@ fn emit_node(node: &Node, context: Context, is_last: bool, emitter: &mut Emitter
         Context::Match => emit_match_arm(node, emitter),
         Context::StructLiteral => emit_struct_literal_field(node, emitter),
         Context::Root | Context::Block => emit_general(node, context, is_last, emitter),
+    }
+}
+
+fn classify_node(node: &Node, context: Context) -> String {
+    let text = node.text.trim();
+    if text.starts_with("//") {
+        "comment".to_string()
+    } else if lower_attribute(text).is_some() {
+        "attribute".to_string()
+    } else if context == Context::Match {
+        "match_arm".to_string()
+    } else if context == Context::StructLiteral {
+        "field".to_string()
+    } else if matches!(context, Context::Struct | Context::Enum) && !is_function(text) {
+        "member".to_string()
+    } else if is_struct_item(text) {
+        "struct".to_string()
+    } else if is_enum_item(text) {
+        "enum".to_string()
+    } else if is_trait_item(text) {
+        "trait".to_string()
+    } else if is_function(text) {
+        "function".to_string()
+    } else if starts_item(text, "impl") {
+        "impl".to_string()
+    } else if starts_item(text, "mod") {
+        "module".to_string()
+    } else if is_match(text) {
+        "match".to_string()
+    } else if is_inline_if_expression(text) {
+        "if_expression".to_string()
+    } else if is_control(text) {
+        "control".to_string()
+    } else if looks_like_struct_literal(node) || is_inline_struct_literal(text) {
+        "struct_literal".to_string()
+    } else if is_let(text) {
+        "let".to_string()
+    } else if let Some(expr) = text.strip_prefix("do ") {
+        format!("do_{}", classify_expression(expr.trim()))
+    } else {
+        classify_expression(text)
+    }
+}
+
+fn classify_expression(text: &str) -> String {
+    if is_inline_if_expression(text) {
+        "if_expression".to_string()
+    } else if is_inline_struct_literal(text) {
+        "struct_literal".to_string()
+    } else if is_assignment(text) {
+        "assignment".to_string()
+    } else if is_jump_statement(text) {
+        "jump".to_string()
+    } else {
+        "expression".to_string()
     }
 }
 
@@ -824,7 +940,43 @@ fn looks_like_struct_literal(node: &Node) -> bool {
             .all(|child| split_once_top_level(child.text.trim(), '=').is_some())
 }
 
+fn is_inline_struct_literal(text: &str) -> bool {
+    let Some(open_index) = text.find('{') else {
+        return false;
+    };
+    text.ends_with('}')
+        && text[..open_index]
+            .trim_end()
+            .chars()
+            .next()
+            .is_some_and(|character| character.is_ascii_uppercase())
+}
+
 impl Emitter {
+    fn begin_node(&mut self, node: &Node, kind: String) {
+        self.tree_stack.push(SourceMapNode {
+            kind,
+            source_line: node.line,
+            source_indent: node.indent,
+            source_text: node.text.clone(),
+            generated_start_line: self.lines.len() + 1,
+            generated_end_line: self.lines.len(),
+            children: Vec::new(),
+        });
+    }
+
+    fn end_node(&mut self) {
+        let Some(mut node) = self.tree_stack.pop() else {
+            return;
+        };
+        node.generated_end_line = self.lines.len();
+        if let Some(parent) = self.tree_stack.last_mut() {
+            parent.children.push(node);
+        } else {
+            self.source_tree.push(node);
+        }
+    }
+
     fn push(&mut self, node: &Node, line: String) {
         self.source_map.push(SourceMapEntry {
             source_line: node.line,
@@ -867,10 +1019,7 @@ pub struct User
     pub name: String
 
 impl User
-    pub fn new(id: u64, name: impl Into[String]) -> Self =
-        Self
-            id = id
-            name = name.into()
+    pub fn new(id: u64, name: String) -> Self = Self{ id, name }
 
     pub fn display_name(&self) -> &str = &self.name
 "#;
@@ -883,11 +1032,8 @@ pub struct User {
     pub name: String,
 }
 impl User {
-    pub fn new(id: u64, name: impl Into<String>) -> Self {
-        Self {
-            id: id,
-            name: name.into(),
-        }
+    pub fn new(id: u64, name: String) -> Self {
+        Self{ id, name }
     }
     pub fn display_name(&self) -> &str {
         &self.name
@@ -995,6 +1141,10 @@ fn clamp(value: i32, min: i32, max: i32) -> i32 =
     fn emits_source_map_json() {
         let output = transpile("fn id(x: i32) -> i32 = x\n").unwrap();
         assert_eq!(output.source_map[0].source_line, 1);
-        assert!(source_map_json(&output.source_map).contains("\"version\": 1"));
+        assert_eq!(output.source_tree[0].kind, "function");
+        let json = source_map_json(&output);
+        assert!(json.contains("\"version\": 2"));
+        assert!(json.contains("\"kind\": \"function\""));
+        assert!(json.contains("\"generated\": { \"start_line\": 1, \"end_line\": 3 }"));
     }
 }
