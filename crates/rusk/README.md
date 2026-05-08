@@ -7,6 +7,7 @@
 ```sh
 rusk input.rsk -o output.rs
 rusk transpile input.rsk --source-map output.map.json
+rusk fmt input.rsk -o input.rsk --line-width 100
 cat input.rsk | rusk
 rusk run
 rusk cargo test
@@ -15,7 +16,8 @@ rusk-lsp
 
 ## Supported MVP syntax
 
-- indentation blocks for `struct`, `enum`, `trait`, `impl`, `mod`, `fn`, `if`, `else`, `match`, loops, `unsafe`, and `async`
+- indentation blocks for `struct`, `enum`, `trait`, `impl`, `mod`, `macro_rules!`, `fn`, `if`, `else`, `match`, loops, `unsafe`, and `async`
+- optional opening braces on indented blocks, including inline multiline closures
 - function bodies with `=`
 - `if condition then expr else expr` expressions
 - Rust-style inline struct literals, e.g. `Self{ id, name }`
@@ -25,6 +27,8 @@ rusk-lsp
 - method generic calls, e.g. `value.parse[i32]()` -> `value.parse::<i32>()`
 - dotted path lowering for type paths and obvious item paths, e.g. `std.io.Read` -> `std::io::Read`, `Foo.new()` -> `Foo::new()`
 - escape hatch: existing Rust `::` syntax is preserved
+- macro definitions with indentation-based `macro_rules!` arms
+- source formatter that preserves existing line break style; only line width is configurable
 - hierarchical JSON source map generation
 
 ## Example
@@ -67,6 +71,15 @@ pub fn main() {
 }
 ```
 
+## Formatter
+
+`rusk fmt` trims trailing whitespace and validates indentation without reflowing expressions, so both compact chains and already-broken chains keep their line break style. The only formatting option is `--line-width`.
+
+```sh
+rusk fmt src/main.rsk -o src/main.rsk
+rusk fmt src/main.rsk --line-width 120
+```
+
 ## Cargo wrapper
 
 `rusk` can wrap common Cargo commands. It transpiles `.rsk` files under Cargo source roots (`src`, `examples`, `tests`, `benches`, and `build.rsk`) into temporary generated `.rs` files, runs Cargo, then removes the generated files.
@@ -89,4 +102,4 @@ cargo install --path crates/rusk --bin rusk-lsp
 
 ## Current limits
 
-This is a compiler-front-end MVP, not a full Rust replacement yet. It intentionally avoids macro definitions, proc-macro DSL parsing, rust-analyzer proxying, Zed extension packaging, and full type-aware dot disambiguation.
+This is a compiler-front-end MVP, not a full Rust replacement yet. It intentionally avoids proc-macro DSL parsing, rust-analyzer proxying, Zed extension packaging, and full type-aware dot disambiguation.

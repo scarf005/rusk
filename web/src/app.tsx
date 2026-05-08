@@ -1,14 +1,18 @@
 import { useEffect, useRef } from "preact/hooks"
 import { computed, signal, useSignal } from "@preact/signals"
-import { useLocation, useRoute } from "wouter-preact"
-import { transpile_syntax_tree_json, transpile_to_rust } from "./wasm/rusk.js"
+import { useLocation } from "wouter-preact"
+import {
+  format_rusk,
+  transpile_syntax_tree_json,
+  transpile_to_rust,
+} from "./wasm/rusk.js"
 import { InputEditor, OutputDisplay } from "./Editor.tsx"
 import { Header, Layout, Main, Panel } from "./Layout.tsx"
 import {
   DEFAULT_EXAMPLE_NAME,
   EXAMPLE_NAMES,
   ExampleName,
-  exampleNameFromSlug,
+  exampleNameFromPath,
   examplePath,
   exampleSource,
 } from "./constants.ts"
@@ -60,7 +64,6 @@ const stats = computed(() => ({
 
 export function App() {
   const [location, navigate] = useLocation()
-  const [isExampleRoute, params] = useRoute("/examples/:slug")
   const copied = useSignal(false)
   const inputRef = useRef<HTMLElement>(null)
   const outputRef = useRef<HTMLElement>(null)
@@ -74,18 +77,15 @@ export function App() {
   }
 
   useEffect(() => {
-    const name = isExampleRoute
-      ? exampleNameFromSlug(params?.slug ?? "")
-      : location === "/"
-      ? DEFAULT_EXAMPLE_NAME
-      : null
+    const path = location === "/" ? globalThis.location.pathname : location
+    const name = path === "/" ? DEFAULT_EXAMPLE_NAME : exampleNameFromPath(path)
 
     if (!name) {
       navigate(examplePath(DEFAULT_EXAMPLE_NAME))
       return
     }
 
-    if (location === "/") {
+    if (path === "/") {
       navigate(examplePath(name))
       return
     }
@@ -96,7 +96,7 @@ export function App() {
     ) return
 
     showExample(name)
-  }, [isExampleRoute, location, navigate, params?.slug])
+  }, [location, navigate])
 
   const handleScroll = (source: "input" | "output") => {
     if (isScrollingRef.current) return
@@ -131,6 +131,8 @@ export function App() {
     copied.value = true
     setTimeout(() => copied.value = false, 900)
   }
+
+  const formatInput = () => inputCode.value = format_rusk(inputCode.value, 100)
 
   return (
     <Layout>
@@ -191,6 +193,15 @@ export function App() {
         <Panel
           title={`Rusk Input (${stats.value.sourceLines} lines)`}
           class="w-full md:w-1/2"
+          action={
+            <button
+              type="button"
+              onClick={formatInput}
+              class="text-xs uppercase font-bold px-3 py-1 border-2 border-black bg-white hover:bg-black hover:text-white"
+            >
+              Format
+            </button>
+          }
         >
           <InputEditor
             editorRef={inputRef}

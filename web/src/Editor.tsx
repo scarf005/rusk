@@ -50,7 +50,7 @@ const rusk = StreamLanguage.define<RuskState>({
     if (stream.match(/^\d[\d_]*/)) return "number"
     if (
       stream.match(
-        /^(pub|struct|enum|trait|impl|fn|let|mut|if|then|else|match|while|for|loop|use|mod|Self|self|return|break|continue|async|unsafe|do)\b/,
+        /^(pub|struct|enum|trait|impl|fn|let|mut|if|then|else|match|while|for|loop|use|mod|macro_rules|Self|self|return|break|continue|async|unsafe|do)\b/,
       )
     ) {
       return "keyword"
@@ -208,7 +208,7 @@ export const InputEditor = ({
   <CodeMirror
     value={value}
     language="rusk"
-    editable={true}
+    editable
     onChange={onChange}
     onScroll={onScroll}
     scrollRef={editorRef}

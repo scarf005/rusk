@@ -101,3 +101,11 @@ export const examplePath = (name: ExampleName) =>
 
 export const exampleNameFromSlug = (slug: string) =>
   EXAMPLE_NAMES_BY_SLUG[slug] ?? null
+
+export const exampleNameFromPath = (path: string) => {
+  const slug = path.replace(/^#/, "").split("?")[0].match(
+    /^\/examples\/([^/]+)$/,
+  )
+    ?.[1]
+  return slug ? exampleNameFromSlug(slug) : null
+}

@@ -1,11 +1,15 @@
-pub fn make_scaler(offset: i32) -> impl Fn(i32) -> i32 =
-    move |value|
-        let doubled = value * 2
-        doubled + offset
+pub fn normalized_names(lines: Vec[String]) -> Vec[String] = lines
+    .into_iter()
+    .filter_map(|line| {
+        let trimmed = line.trim()
+        if trimmed.is_empty() then None else Some(trimmed.to_ascii_lowercase())
+    })
+    .collect[Vec[String]]()
 
-pub fn demo(value: i32) -> i32 =
-    let adjust = |number|
-        let shifted = number + 1
-        shifted * 3
-    let scale = make_scaler(4)
-    scale(adjust(value))
+pub fn total_large_orders(orders: Vec[Vec[i32]]) -> i32 = orders
+    .into_iter()
+    .map(|items| {
+        let subtotal = items.into_iter().sum[i32]()
+        if subtotal >= 100 then subtotal else 0
+    })
+    .sum()

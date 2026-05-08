@@ -24,6 +24,17 @@ pub struct TranspileOutput {
     pub source_tree: Vec<SourceMapNode>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FormatOptions {
+    pub line_width: usize,
+}
+
+impl Default for FormatOptions {
+    fn default() -> Self {
+        Self { line_width: 100 }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TranspileError {
     pub line: usize,
@@ -42,7 +53,12 @@ impl std::error::Error for TranspileError {}
 mod wasm_api {
     use wasm_bindgen::prelude::*;
 
-    use super::{TranspileError, source_map_json, transpile};
+    use super::{FormatOptions, TranspileError, format_source, source_map_json, transpile};
+
+    #[wasm_bindgen]
+    pub fn format_rusk(source: &str, line_width: usize) -> Result<String, JsValue> {
+        format_source(source, FormatOptions { line_width }).map_err(error_to_js_value)
+    }
 
     #[wasm_bindgen]
     pub fn transpile_to_rust(source: &str) -> Result<String, JsValue> {
@@ -87,6 +103,7 @@ enum Context {
     Trait,
     Match,
     StructLiteral,
+    Macro,
 }
 
 #[derive(Debug, Default)]
@@ -99,21 +116,47 @@ struct Emitter {
 
 pub fn transpile(source: &str) -> Result<TranspileOutput, TranspileError> {
     let lines = source_lines(source)?;
-    let (nodes, index) = parse_nodes(&lines, 0, 0)?;
-    if index != lines.len() {
-        return Err(TranspileError {
-            line: lines[index].line,
-            message: "unexpected indentation".to_string(),
-        });
-    }
+    parse_source_lines(&lines)?;
 
     let mut emitter = Emitter::default();
+    let (nodes, _) = parse_nodes(&lines, 0, 0)?;
     emit_nodes(&nodes, Context::Root, &mut emitter);
     Ok(TranspileOutput {
         rust: ensure_trailing_newline(&emitter.lines.join("\n")),
         source_map: emitter.source_map,
         source_tree: emitter.source_tree,
     })
+}
+
+pub fn format_source(source: &str, options: FormatOptions) -> Result<String, TranspileError> {
+    if options.line_width == 0 {
+        return Err(TranspileError {
+            line: 1,
+            message: "line width must be greater than zero".to_string(),
+        });
+    }
+
+    let lines = source_lines(source)?;
+    parse_source_lines(&lines)?;
+
+    Ok(ensure_trailing_newline(
+        &source
+            .lines()
+            .map(format_line)
+            .collect::<Vec<_>>()
+            .join("\n"),
+    ))
+}
+
+fn parse_source_lines(lines: &[SourceLine]) -> Result<(), TranspileError> {
+    let (_, index) = parse_nodes(lines, 0, 0)?;
+    if index != lines.len() {
+        return Err(TranspileError {
+            line: lines[index].line,
+            message: "unexpected indentation".to_string(),
+        });
+    }
+    Ok(())
 }
 
 pub fn source_map_json(output: &TranspileOutput) -> String {
@@ -180,7 +223,8 @@ fn source_lines(source: &str) -> Result<Vec<SourceLine>, TranspileError> {
         .filter_map(|(index, raw)| {
             let line = index + 1;
             let without_comment = raw.trim_end();
-            if without_comment.trim().is_empty() {
+            let trimmed = without_comment.trim();
+            if trimmed.is_empty() || is_closing_delimiter_line(trimmed) {
                 return None;
             }
             if without_comment.contains('\t') {
@@ -200,6 +244,27 @@ fn source_lines(source: &str) -> Result<Vec<SourceLine>, TranspileError> {
             }))
         })
         .collect()
+}
+
+fn is_closing_delimiter_line(text: &str) -> bool {
+    text.contains('}')
+        && text
+            .chars()
+            .all(|character| matches!(character, '}' | ')' | ']' | ';' | ','))
+}
+
+fn format_line(raw: &str) -> String {
+    if raw.trim().is_empty() {
+        String::new()
+    } else {
+        format!("{}{}", spaces(raw_indent(raw)), raw.trim())
+    }
+}
+
+fn raw_indent(raw: &str) -> usize {
+    raw.chars()
+        .take_while(|character| *character == ' ')
+        .count()
 }
 
 fn parse_nodes(
@@ -267,6 +332,7 @@ fn emit_node_body(node: &Node, context: Context, is_last: bool, emitter: &mut Em
         Context::Trait => emit_trait_member(node, emitter),
         Context::Match => emit_match_arm(node, emitter),
         Context::StructLiteral => emit_struct_literal_field(node, emitter),
+        Context::Macro => emit_macro_arm(node, emitter),
         Context::Root | Context::Block => emit_general(node, context, is_last, emitter),
     }
 }
@@ -281,6 +347,8 @@ fn classify_node(node: &Node, context: Context) -> String {
         "match_arm".to_string()
     } else if context == Context::StructLiteral {
         "field".to_string()
+    } else if context == Context::Macro {
+        "macro_arm".to_string()
     } else if matches!(context, Context::Struct | Context::Enum) && !is_function(text) {
         "member".to_string()
     } else if is_struct_item(text) {
@@ -289,6 +357,8 @@ fn classify_node(node: &Node, context: Context) -> String {
         "enum".to_string()
     } else if is_trait_item(text) {
         "trait".to_string()
+    } else if is_macro_item(text) {
+        "macro".to_string()
     } else if is_function(text) {
         "function".to_string()
     } else if starts_item(text, "impl") {
@@ -334,6 +404,8 @@ fn emit_general(node: &Node, context: Context, is_last: bool, emitter: &mut Emit
         emit_braced_item(node, Context::Enum, emitter, lower_signature(text));
     } else if is_trait_item(text) {
         emit_braced_item(node, Context::Trait, emitter, lower_signature(text));
+    } else if is_macro_item(text) {
+        emit_braced_item(node, Context::Macro, emitter, lower_signature(text));
     } else if is_function(text) {
         emit_function(node, emitter);
     } else if is_impl_or_mod_item(text) {
@@ -351,6 +423,7 @@ fn emit_general(node: &Node, context: Context, is_last: bool, emitter: &mut Emit
 
 fn emit_braced_item(node: &Node, child_context: Context, emitter: &mut Emitter, header: String) {
     let indent = spaces(node.indent);
+    let header = strip_open_brace(&header);
     if node.children.is_empty() && matches!(child_context, Context::Struct | Context::Enum) {
         emitter.push(node, format!("{}{};", indent, header));
         return;
@@ -376,6 +449,9 @@ fn emit_function(node: &Node, emitter: &mut Emitter) {
     let body = body.trim();
     if body.is_empty() {
         emit_function_body(&node.children, returns_value, emitter);
+    } else if !node.children.is_empty() && are_continuations(&node.children) {
+        emitter.push_generated(format!("{}{}", spaces(node.indent + 4), lower_expr(body)));
+        emit_continuations(&node.children, 4, returns_value, emitter);
     } else if let Some(expr) = body.strip_prefix("do ") {
         emitter.push_generated(format!(
             "{}{};",
@@ -403,13 +479,18 @@ fn emit_function_body(nodes: &[Node], returns_value: bool, emitter: &mut Emitter
 fn emit_statement(node: &Node, _context: Context, is_last: bool, emitter: &mut Emitter) {
     let indent = spaces(node.indent);
     let text = node.text.trim();
-    if !node.children.is_empty() && is_multiline_closure_head(text) {
+    if !node.children.is_empty() && are_continuations(&node.children) {
+        emitter.push(node, format!("{}{}", indent, lower_expr(text)));
+        emit_continuations(&node.children, 0, is_last, emitter);
+    } else if !node.children.is_empty() && is_multiline_closure_head(text) {
         emit_multiline_closure_expr(node, text, is_last, emitter);
     } else if !node.children.is_empty()
         && let Some((lhs, rhs)) = split_once_top_level(text, '=')
         && is_multiline_closure_head(rhs.trim())
     {
         emit_multiline_closure_assignment(node, lhs.trim(), rhs.trim(), emitter);
+    } else if !node.children.is_empty() && is_raw_braced_expr_head(text) {
+        emit_raw_braced_expr(node, text, is_last, emitter);
     } else if let Some(expr) = text.strip_prefix("do ") {
         emitter.push(node, format!("{}{};", indent, lower_expr(expr.trim())));
     } else if is_use_or_extern_crate(text) {
@@ -428,7 +509,10 @@ fn emit_statement(node: &Node, _context: Context, is_last: bool, emitter: &mut E
 
 fn emit_multiline_closure_expr(node: &Node, head: &str, is_last: bool, emitter: &mut Emitter) {
     let indent = spaces(node.indent);
-    emitter.push(node, format!("{}{} {{", indent, lower_expr(head.trim())));
+    emitter.push(
+        node,
+        format!("{}{} {{", indent, lower_expr(strip_open_brace(head))),
+    );
     emit_nodes(&node.children, Context::Block, emitter);
     emitter.push_generated(format!("{}}}{}", indent, if is_last { "" } else { ";" }));
 }
@@ -437,10 +521,59 @@ fn emit_multiline_closure_assignment(node: &Node, lhs: &str, rhs: &str, emitter:
     let indent = spaces(node.indent);
     emitter.push(
         node,
-        format!("{}{} = {} {{", indent, lower_expr(lhs), lower_expr(rhs)),
+        format!(
+            "{}{} = {} {{",
+            indent,
+            lower_expr(lhs),
+            lower_expr(strip_open_brace(rhs))
+        ),
     );
     emit_nodes(&node.children, Context::Block, emitter);
     emitter.push_generated(format!("{}}};", indent));
+}
+
+fn emit_raw_braced_expr(node: &Node, head: &str, is_last: bool, emitter: &mut Emitter) {
+    let indent = spaces(node.indent);
+    let head = strip_open_brace(head);
+    emitter.push(node, format!("{}{} {{", indent, lower_expr(head)));
+    emit_nodes(&node.children, Context::Block, emitter);
+    emitter.push_generated(format!(
+        "{}}}{}{}",
+        indent,
+        closing_delimiters(head),
+        if is_last { "" } else { ";" }
+    ));
+}
+
+fn emit_continuations(
+    nodes: &[Node],
+    indent_offset: usize,
+    last_is_tail_value: bool,
+    emitter: &mut Emitter,
+) {
+    for (index, node) in nodes.iter().enumerate() {
+        let adjusted = offset_node_indent(node, indent_offset);
+        let is_last = index + 1 == nodes.len();
+        emit_node(
+            &adjusted,
+            Context::Block,
+            !is_last || last_is_tail_value,
+            emitter,
+        );
+    }
+}
+
+fn offset_node_indent(node: &Node, offset: usize) -> Node {
+    Node {
+        line: node.line,
+        indent: node.indent + offset,
+        text: node.text.clone(),
+        children: node
+            .children
+            .iter()
+            .map(|child| offset_node_indent(child, offset))
+            .collect(),
+    }
 }
 
 fn emit_struct_member(node: &Node, emitter: &mut Emitter) {
@@ -525,6 +658,26 @@ fn emit_match_arm(node: &Node, emitter: &mut Emitter) {
         );
         emit_nodes(&node.children, Context::Block, emitter);
         emitter.push_generated(format!("{}}},", indent));
+    }
+}
+
+fn emit_macro_arm(node: &Node, emitter: &mut Emitter) {
+    let indent = spaces(node.indent);
+    if let Some((pattern, expr)) = split_arrow(node.text.trim()) {
+        let pattern = pattern.trim();
+        let expr = expr.trim();
+        if expr.is_empty() {
+            emitter.push(node, format!("{}{} => {{", indent, pattern));
+            emit_nodes(&node.children, Context::Block, emitter);
+            emitter.push_generated(format!("{}}};", indent));
+        } else {
+            emitter.push(
+                node,
+                format!("{}{} => {{ {} }};", indent, pattern, lower_expr(expr)),
+            );
+        }
+    } else {
+        emitter.push(node, format!("{}{};", indent, lower_expr(node.text.trim())));
     }
 }
 
@@ -634,7 +787,30 @@ fn is_multiline_closure_head(text: &str) -> bool {
         return false;
     };
     let tail = rest[end + 1..].trim();
-    tail.is_empty() || tail.starts_with("->")
+    tail.is_empty() || tail == "{" || tail.starts_with("->")
+}
+
+fn is_raw_braced_expr_head(text: &str) -> bool {
+    text.trim().ends_with('{')
+}
+
+fn strip_open_brace(text: &str) -> &str {
+    text.trim().trim_end_matches('{').trim_end()
+}
+
+fn closing_delimiters(text: &str) -> String {
+    let mut round = 0usize;
+    let mut square = 0usize;
+    for character in text.chars() {
+        match character {
+            '(' => round += 1,
+            ')' => round = round.saturating_sub(1),
+            '[' => square += 1,
+            ']' => square = square.saturating_sub(1),
+            _ => {}
+        }
+    }
+    format!("{}{}", ")".repeat(round), "]".repeat(square))
 }
 
 fn lower_basic_expr(text: &str) -> String {
@@ -950,6 +1126,10 @@ fn is_impl_or_mod_item(text: &str) -> bool {
     starts_item(text, "impl") || starts_item(text, "mod")
 }
 
+fn is_macro_item(text: &str) -> bool {
+    text.starts_with("macro_rules!")
+}
+
 fn is_function(text: &str) -> bool {
     text.starts_with("fn ") || text.starts_with("pub fn ") || text.contains(" fn ")
 }
@@ -1006,6 +1186,13 @@ fn is_let(text: &str) -> bool {
 
 fn is_use_or_extern_crate(text: &str) -> bool {
     text.starts_with("use ") || text.starts_with("extern crate ")
+}
+
+fn are_continuations(nodes: &[Node]) -> bool {
+    !nodes.is_empty()
+        && nodes
+            .iter()
+            .all(|node| node.text.trim_start().starts_with('.'))
 }
 
 fn is_jump_statement(text: &str) -> bool {
@@ -1238,7 +1425,8 @@ fn example(xs: &[i32], index: usize) -> i32 =
     let b = [3]
     let c = xs[3]
     let d = xs[index]
-    c + d
+    let repeated = [d; 2]
+    c + repeated[1]
 "#;
 
         assert_eq!(
@@ -1248,7 +1436,8 @@ fn example(xs: &[i32], index: usize) -> i32 =
     let b = [3];
     let c = xs[3];
     let d = xs[index];
-    c + d
+    let repeated = [d; 2];
+    c + repeated[1]
 }
 "#
         );
@@ -1303,36 +1492,64 @@ pub fn id(value: i32) -> i32 {
     #[test]
     fn lowers_multiline_closures() {
         let source = r#"
-pub fn make_scaler(offset: i32) -> impl Fn(i32) -> i32 =
-    move |value|
-        let doubled = value * 2
-        doubled + offset
-
-pub fn demo(value: i32) -> i32 =
-    let adjust = |number|
-        let shifted = number + 1
-        shifted * 3
-    let scale = make_scaler(4)
-    scale(adjust(value))
+pub fn normalized_names(lines: Vec[String]) -> Vec[String] = lines
+    .into_iter()
+    .filter_map(|line| {
+        let trimmed = line.trim()
+        if trimmed.is_empty() then None else Some(trimmed.to_ascii_lowercase())
+    })
+    .collect[Vec[String]]()
 "#;
 
         assert_eq!(
             rust(source),
-            r#"pub fn make_scaler(offset: i32) -> impl Fn(i32) -> i32 {
-    move |value| {
-        let doubled = value * 2;
-        doubled + offset
-    }
-}
-pub fn demo(value: i32) -> i32 {
-    let adjust = |number| {
-        let shifted = number + 1;
-        shifted * 3
-    };
-    let scale = make_scaler(4);
-    scale(adjust(value))
+            r#"pub fn normalized_names(lines: Vec<String>) -> Vec<String> {
+    lines
+        .into_iter()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            if trimmed.is_empty() { None } else { Some(trimmed.to_ascii_lowercase()) }
+        })
+        .collect::<Vec<String>>()
 }
 "#
+        );
+    }
+
+    #[test]
+    fn lowers_macro_rules_items() {
+        let source = r#"
+macro_rules! make_message
+    ($name:expr) => format!("hello {}", $name)
+
+pub fn demo() -> String =
+    make_message!("Ada")
+"#;
+
+        assert_eq!(
+            rust(source),
+            r#"macro_rules! make_message {
+    ($name:expr) => { format!("hello {}", $name) };
+}
+pub fn demo() -> String {
+    make_message!("Ada")
+}
+"#
+        );
+    }
+
+    #[test]
+    fn formats_without_reflowing_line_break_style() {
+        let inline = "pub fn even_squares(values: Vec[i32]) -> Vec[i32] =\n    values.into_iter().filter(|value| value % 2 == 0).map(|value| value * value).collect[Vec[i32]]()\n";
+        let broken = "pub fn even_squares(values: Vec[i32]) -> Vec[i32] = values\n    .into_iter()\n    .filter(|value| value % 2 == 0)\n    .map(|value| value * value)\n    .collect[Vec[i32]]()\n";
+
+        assert_eq!(
+            format_source(inline, FormatOptions { line_width: 80 }).unwrap(),
+            inline
+        );
+        assert_eq!(
+            format_source(broken, FormatOptions { line_width: 80 }).unwrap(),
+            broken
         );
     }
 
