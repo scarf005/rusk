@@ -3,7 +3,6 @@ pub struct Boxed[T]
 
 impl[T] Boxed[T]
     pub fn new(value: T) -> Self = Self{ value }
-
     pub fn get(&self) -> &T = &self.value
 
 pub fn parse_boxed(raw: &str) -> Result[Boxed[i32], std.num.ParseIntError] =
