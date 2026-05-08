@@ -650,7 +650,9 @@ fn copy_manifest_if_changed(source: &Path, destination: &Path, is_root_manifest:
     let Ok(mut content) = fs::read_to_string(source) else {
         return;
     };
-    if is_root_manifest && !content.lines().any(|line| line.trim() == "[workspace]") {
+    if is_root_manifest && !manifest_has_section(&content, "package") {
+        content = "[workspace]\n\n[package]\nname = \"rusk-generated\"\nversion = \"0.0.0\"\nedition = \"2024\"\n".to_string();
+    } else if is_root_manifest && !manifest_has_section(&content, "workspace") {
         content = format!("[workspace]\n\n{content}");
     }
     if fs::read_to_string(destination).is_ok_and(|existing| existing == content) {
@@ -660,6 +662,12 @@ fn copy_manifest_if_changed(source: &Path, destination: &Path, is_root_manifest:
         let _ = fs::create_dir_all(parent);
     }
     let _ = fs::write(destination, content);
+}
+
+fn manifest_has_section(content: &str, section: &str) -> bool {
+    content
+        .lines()
+        .any(|line| line.trim() == format!("[{section}]"))
 }
 
 fn write_generated_rust_file(uri: &Url, rust: &str) {
@@ -1325,6 +1333,25 @@ mod tests {
             rust_uri.to_file_path().unwrap(),
             source_root.join("target/rusk/src/main.rs")
         );
+    }
+
+    #[test]
+    fn root_workspace_manifest_becomes_generated_package() {
+        let temp = std::env::temp_dir().join(format!("rusk-lsp-manifest-{}", std::process::id()));
+        let source = temp.join("Cargo.toml");
+        let destination = temp.join("target/rusk/Cargo.toml");
+        let _ = fs::remove_dir_all(&temp);
+        fs::create_dir_all(&temp).unwrap();
+        fs::write(&source, "[workspace]\nmembers = [\"crates/rusk\"]\n").unwrap();
+
+        copy_manifest_if_changed(&source, &destination, true);
+
+        let manifest = fs::read_to_string(&destination).unwrap();
+        assert!(manifest.contains("[workspace]"));
+        assert!(manifest.contains("[package]"));
+        assert!(manifest.contains("name = \"rusk-generated\""));
+        assert!(!manifest.contains("members ="));
+        let _ = fs::remove_dir_all(temp);
     }
 }
 
