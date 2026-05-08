@@ -1,38 +1,8 @@
 # Rusk
 
-`rusk` is an alternative syntax for [rust](https://rust-lang.org).
+![](./thumbnail.webp)
 
-## Usage
-
-```sh
-rusk input.rsk -o output.rs
-rusk transpile input.rsk --source-map output.map.json
-rusk from-rust input.rs -o output.rsk
-rusk fmt input.rsk -o input.rsk --line-width 100
-cat input.rsk | rusk
-rusk run
-rusk cargo test
-rusk-lsp
-just web # open web editor
-```
-
-## Supported MVP syntax
-
-- indentation blocks for `struct`, `enum`, `trait`, `impl`, `mod`, `macro_rules!`, `fn`, `if`, `else`, `match`, loops, `unsafe`, and `async`
-- optional opening braces on indented blocks, including inline multiline closures
-- function bodies with `=`
-- `if condition then expr else expr` expressions
-- Rust-style inline struct literals, e.g. `Self{ id, name }`
-- `do expr` for explicit semicolon/discard statements when inference is not enough
-- Rust-style `#[...]` / `#![...]` attributes
-- Scala-style generic brackets in type positions, e.g. `Result[T, E]` -> `Result<T, E>`
-- method generic calls, e.g. `value.parse[i32]()` -> `value.parse::<i32>()`
-- dotted path lowering for type paths and obvious item paths, e.g. `std.io.Read` -> `std::io::Read`, `Foo.new()` -> `Foo::new()`
-- escape hatch: existing Rust `::` syntax is preserved
-- macro definitions with indentation-based `macro_rules!` arms
-- source formatter that preserves existing line break style; only line width is configurable
-- hierarchical JSON source map generation
-- Rust-to-Rusk conversion for formatted Rust source
+`rusk` is an alternative syntax for [rust](https://rust-lang.org) inspired by the [2023 post rust's ugly syntax ](https://matklad.github.io/2023/01/26/rusts-ugly-syntax.html).
 
 ## Example
 
@@ -72,6 +42,38 @@ pub fn main() {
     println!("{}", user.display_name());
 }
 ```
+
+## Usage
+
+```sh
+rusk input.rsk -o output.rs
+rusk transpile input.rsk --source-map output.map.json
+rusk from-rust input.rs -o output.rsk
+rusk fmt input.rsk -o input.rsk --line-width 100
+cat input.rsk | rusk
+rusk run
+rusk cargo test
+rusk-lsp
+just web # open web editor
+```
+
+## Supported MVP syntax
+
+- indentation blocks for `struct`, `enum`, `trait`, `impl`, `mod`, `macro_rules!`, `fn`, `if`, `else`, `match`, loops, `unsafe`, and `async`
+- optional opening braces on indented blocks, including inline multiline closures
+- function bodies with `=`
+- `if condition then expr else expr` expressions
+- Rust-style inline struct literals, e.g. `Self{ id, name }`
+- `do expr` for explicit semicolon/discard statements when inference is not enough
+- Rust-style `#[...]` / `#![...]` attributes
+- Scala-style generic brackets in type positions, e.g. `Result[T, E]` -> `Result<T, E>`
+- method generic calls, e.g. `value.parse[i32]()` -> `value.parse::<i32>()`
+- dotted path lowering for type paths and obvious item paths, e.g. `std.io.Read` -> `std::io::Read`, `Foo.new()` -> `Foo::new()`
+- escape hatch: existing Rust `::` syntax is preserved
+- macro definitions with indentation-based `macro_rules!` arms
+- source formatter that preserves existing line break style; only line width is configurable
+- hierarchical JSON source map generation
+- Rust-to-Rusk conversion for formatted Rust source
 
 ## Formatter
 
