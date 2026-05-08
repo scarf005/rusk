@@ -10,4 +10,6 @@ pub fn parse_boxed(raw: &str) -> Result[Boxed[i32], std.num.ParseIntError] =
     Ok(Boxed.new(value))
 
 pub fn main() =
-    let _ = parse_boxed("42")
+    match parse_boxed("42")
+        Ok(value) => println!("{}", value.get())
+        Err(error) => eprintln!("{error}")

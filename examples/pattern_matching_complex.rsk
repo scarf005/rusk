@@ -14,4 +14,4 @@ pub fn message_score(message: Message) -> i32 =
         Message.Quit => 0
 
 pub fn main() =
-    let _ = message_score(Message.Move { x: 1, y: 2 })
+    println!("{}", message_score(Message.Move { x: 1, y: 2 }))

@@ -7,5 +7,5 @@ pub fn swap(pair: (String, usize)) -> (usize, String) =
     (count, name)
 
 pub fn main() =
-    let _ = sum_pair((1, 2))
-    let _ = swap(("items".to_string(), 3))
+    println!("{}", sum_pair((1, 2)))
+    println!("{:?}", swap(("items".to_string(), 3)))

@@ -5,4 +5,4 @@ pub fn demo(value: i32) -> i32 =
     apply(value, |number| number + 1)
 
 pub fn main() =
-    let _ = demo(41)
+    println!("{}", demo(41))

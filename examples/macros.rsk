@@ -14,5 +14,5 @@ pub fn assert_non_empty(values: &[i32]) =
     assert!(!values.is_empty())
 
 pub fn main() =
-    let _ = make_message("Ada")
+    println!("{}", make_message("Ada"))
     assert_non_empty(&[1])

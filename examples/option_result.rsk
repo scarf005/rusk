@@ -9,5 +9,7 @@ pub fn parse_positive(raw: &str) -> Result[Option[i32], std.num.ParseIntError] =
     if value > 0 then Ok(Some(value)) else Ok(None)
 
 pub fn main() =
-    let _ = first_positive(&[-1, 2])
-    let _ = parse_positive("3")
+    println!("{:?}", first_positive(&[-1, 2]))
+    match parse_positive("3")
+        Ok(value) => println!("{:?}", value)
+        Err(error) => eprintln!("{error}")

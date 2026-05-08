@@ -8,4 +8,4 @@ pub trait Render
     fn render(&self) -> String
 
 pub fn main() =
-    let _ = math::clamp(5, 0, 10)
+    println!("{}", math::clamp(5, 0, 10))

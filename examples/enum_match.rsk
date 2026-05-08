@@ -11,4 +11,4 @@ pub fn describe(token: Token) -> &'static str =
         Token.Eof => "eof"
 
 pub fn main() =
-    let _ = describe(Token.Eof)
+    println!("{}", describe(Token.Eof))

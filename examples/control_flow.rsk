@@ -7,4 +7,4 @@ pub fn sum_until(values: &[i32], limit: usize) -> i32 =
     if total < 0 then 0 else total
 
 pub fn main() =
-    let _ = sum_until(&[1, 2, 3], 2)
+    println!("{}", sum_until(&[1, 2, 3], 2))

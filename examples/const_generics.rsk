@@ -7,4 +7,4 @@ impl[T, const N: usize] ArrayBox[T, N]
 
 pub fn main() =
     let array_box = ArrayBox.new([1, 2, 3])
-    let _ = array_box.len()
+    println!("{}", array_box.len())

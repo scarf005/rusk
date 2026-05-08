@@ -15,5 +15,5 @@ pub fn total_large_orders(orders: Vec[Vec[i32]]) -> i32 = orders
     .sum()
 
 pub fn main() =
-    let _ = normalized_names(vec![" Ada ".to_string(), "".to_string()])
-    let _ = total_large_orders(vec![vec![40, 60], vec![1, 2]])
+    println!("{:?}", normalized_names(vec![" Ada ".to_string(), "".to_string()]))
+    println!("{}", total_large_orders(vec![vec![40, 60], vec![1, 2]]))

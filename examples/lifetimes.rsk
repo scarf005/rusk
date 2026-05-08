@@ -10,5 +10,5 @@ pub fn choose['a](left: &'a str, right: &'a str, use_left: bool) -> &'a str =
 
 pub fn main() =
     let borrowed = Borrowed.new("Ada")
-    let _ = borrowed.name()
-    let _ = choose("left", "right", true)
+    println!("{}", borrowed.name())
+    println!("{}", choose("left", "right", true))

@@ -7,4 +7,4 @@ pub mod outer
 pub fn read() -> i32 = outer::doubled()
 
 pub fn main() =
-    let _ = read()
+    println!("{}", read())
