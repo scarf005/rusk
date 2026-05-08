@@ -18,6 +18,7 @@ import pathsAndAttributes from "../../examples/paths_and_attributes.rsk?raw"
 import patternMatchingComplex from "../../examples/pattern_matching_complex.rsk?raw"
 import rawStrings from "../../examples/raw_strings.rsk?raw"
 import resultFlow from "../../examples/result_flow.rsk?raw"
+import rustsUglySyntax from "../../examples/rusts_ugly_syntax.rsk?raw"
 import stringParsing from "../../examples/string_parsing.rsk?raw"
 import traitsImpl from "../../examples/traits_impl.rsk?raw"
 import tupleDestructuring from "../../examples/tuple_destructuring.rsk?raw"
@@ -77,6 +78,11 @@ export const EXAMPLES = [
   },
   { name: "Raw Strings", slug: "raw-strings", source: rawStrings },
   { name: "Result Flow", slug: "result-flow", source: resultFlow },
+  {
+    name: "Rust's Ugly Syntax",
+    slug: "rusts-ugly-syntax",
+    source: rustsUglySyntax,
+  },
   { name: "Module Layout", slug: "module-layout", source: moduleLayout },
 ] as const
 
