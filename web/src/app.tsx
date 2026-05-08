@@ -17,11 +17,26 @@ import {
   exampleSource,
 } from "./constants.ts"
 
-type OutputMode = "rust" | "syntax-tree"
+type OutputMode = "rust" | "syntax-tree" | "run"
+type RunState = "idle" | "running"
+
+type RunResponse = {
+  ok: boolean
+  stage: "compile" | "run"
+  status: number | null
+  stdout: string
+  stderr: string
+  timedOut: boolean
+}
+
+const isDevServer =
+  (import.meta as ImportMeta & { env: { DEV: boolean } }).env.DEV
 
 const selectedExample = signal<ExampleName>(DEFAULT_EXAMPLE_NAME)
 const inputCode = signal<string>(exampleSource(DEFAULT_EXAMPLE_NAME))
 const outputMode = signal<OutputMode>("rust")
+const runOutput = signal("")
+const runState = signal<RunState>("idle")
 
 const transpiled = computed(() => {
   const started = performance.now()
@@ -49,6 +64,7 @@ const outputText = computed(() => {
   if (transpiled.value.error) {
     return "// Fix the Rusk source to see generated output."
   }
+  if (outputMode.value === "run") return runOutput.value
   return outputMode.value === "rust"
     ? transpiled.value.rust
     : transpiled.value.syntaxTree
@@ -59,7 +75,9 @@ const stats = computed(() => ({
   outputLines: countLines(outputText.value),
   outputMs: outputMode.value === "rust"
     ? transpiled.value.rustMs
-    : transpiled.value.syntaxTreeMs,
+    : outputMode.value === "syntax-tree"
+    ? transpiled.value.syntaxTreeMs
+    : 0,
 }))
 
 export function App() {
@@ -134,6 +152,29 @@ export function App() {
 
   const formatInput = () => inputCode.value = format_rusk(inputCode.value, 100)
 
+  const runRust = async () => {
+    if (transpiled.value.error || runState.value === "running") return
+
+    runState.value = "running"
+    outputMode.value = "run"
+    runOutput.value = "Running..."
+    try {
+      const response = await fetch("/api/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rust: transpiled.value.rust }),
+      })
+      const result = await response.json() as RunResponse | { error: string }
+      runOutput.value = "error" in result
+        ? result.error
+        : formatRunOutput(result)
+    } catch (error) {
+      runOutput.value = stringifyError(error)
+    } finally {
+      runState.value = "idle"
+    }
+  }
+
   return (
     <Layout>
       <Header>
@@ -144,7 +185,11 @@ export function App() {
         </div>
 
         <div class="flex-1 flex overflow-x-auto w-full border-b-2 lg:border-b-0 lg:border-r-2 border-black no-scrollbar bg-white">
-          {["rust", "syntax-tree"].map((mode) => (
+          {([
+            "rust",
+            "syntax-tree",
+            ...(runOutput.value ? ["run"] : []),
+          ] as OutputMode[]).map((mode) => (
             <button
               type="button"
               key={mode}
@@ -155,7 +200,11 @@ export function App() {
                   : "bg-white text-black hover:bg-gray-200"
               }`}
             >
-              {mode === "rust" ? "Rust Output" : "Syntax Tree"}
+              {mode === "rust"
+                ? "Rust Output"
+                : mode === "syntax-tree"
+                ? "Syntax Tree"
+                : "Run Output"}
             </button>
           ))}
         </div>
@@ -213,25 +262,48 @@ export function App() {
 
         <Panel
           title={`${
-            outputMode.value === "rust" ? "Rust Output" : "Syntax Tree"
-          } (${stats.value.outputLines} lines, ${
-            formatMs(stats.value.outputMs)
+            outputMode.value === "rust"
+              ? "Rust Output"
+              : outputMode.value === "syntax-tree"
+              ? "Syntax Tree"
+              : "Run Output"
+          } (${stats.value.outputLines} lines${
+            outputMode.value === "run"
+              ? ""
+              : `, ${formatMs(stats.value.outputMs)}`
           })`}
           class="w-full md:w-1/2"
           action={
-            <button
-              type="button"
-              onClick={copyOutput}
-              class="text-xs uppercase font-bold px-3 py-1 border-2 border-black bg-white hover:bg-black hover:text-white"
-            >
-              {copied.value ? "Copied" : "Copy"}
-            </button>
+            <div class="flex gap-2">
+              {isDevServer && (
+                <button
+                  type="button"
+                  onClick={runRust}
+                  disabled={runState.value === "running" ||
+                    !!transpiled.value.error}
+                  class="text-xs uppercase font-bold px-3 py-1 border-2 border-black bg-white hover:bg-black hover:text-white disabled:opacity-50 disabled:hover:bg-white disabled:hover:text-black"
+                >
+                  {runState.value === "running" ? "Running" : "▶ Run"}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={copyOutput}
+                class="text-xs uppercase font-bold px-3 py-1 border-2 border-black bg-white hover:bg-black hover:text-white"
+              >
+                {copied.value ? "Copied" : "Copy"}
+              </button>
+            </div>
           }
         >
           <OutputDisplay
             outputRef={outputRef}
             value={outputText.value}
-            language={outputMode.value === "rust" ? "rust" : "json"}
+            language={outputMode.value === "rust"
+              ? "rust"
+              : outputMode.value === "syntax-tree"
+              ? "json"
+              : "text"}
             error={transpiled.value.error}
             onScroll={() => handleScroll("output")}
           />
@@ -248,6 +320,14 @@ function countLines(value: string): number {
 
 function formatMs(value: number): string {
   return `${value.toFixed(value < 10 ? 2 : 1)} ms`
+}
+
+function formatRunOutput(result: RunResponse): string {
+  const output = `${result.stdout}${result.stderr}`.trimEnd()
+  const status = result.timedOut
+    ? `${result.stage} timed out`
+    : `${result.stage} exit ${result.status ?? "unknown"}`
+  return output ? `${output}\n\n[${status}]` : `[${status}]`
 }
 
 function stringifyError(error: unknown): string {

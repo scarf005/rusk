@@ -16,7 +16,7 @@ import { defaultKeymap, history, historyKeymap } from "@codemirror/commands"
 import { json } from "@codemirror/lang-json"
 import { rust } from "@codemirror/lang-rust"
 
-type CodeLanguage = "rusk" | "rust" | "json"
+type CodeLanguage = "rusk" | "rust" | "json" | "text"
 
 type RuskState = { inString: boolean }
 
@@ -74,6 +74,7 @@ const rusk = StreamLanguage.define<RuskState>({
 const languageExtension = (language: CodeLanguage): Extension => {
   if (language === "rust") return rust()
   if (language === "json") return json()
+  if (language === "text") return []
   return rusk
 }
 
@@ -217,7 +218,7 @@ export const InputEditor = ({
 
 interface OutputDisplayProps {
   value: string
-  language: "rust" | "json"
+  language: "rust" | "json" | "text"
   error?: string
   onScroll?: () => void
   outputRef?: Ref<HTMLElement>
