@@ -467,6 +467,14 @@ fn emit_match_arm(node: &Node, emitter: &mut Emitter) {
             emitter.push(node, format!("{}{} => {{", indent, pattern));
             emit_nodes(&node.children, Context::Block, emitter);
             emitter.push_generated(format!("{}}},", indent));
+        } else if let Some(expr) = expr.strip_prefix("do ") {
+            emitter.push(node, format!("{}{} => {{", indent, pattern));
+            emitter.push_generated(format!(
+                "{}{};",
+                spaces(node.indent + 4),
+                lower_expr(expr.trim())
+            ));
+            emitter.push_generated(format!("{}}},", indent));
         } else {
             emitter.push(
                 node,
@@ -811,9 +819,45 @@ fn type_like_generic(content: &str) -> bool {
     let trimmed = content.trim();
     !trimmed.is_empty()
         && !trimmed.chars().all(|character| character.is_ascii_digit())
-        && trimmed
-            .chars()
-            .any(|character| character.is_ascii_alphabetic() || character == '_')
+        && generic_tokens(trimmed).into_iter().any(|token| {
+            token == "_"
+                || is_builtin_type(token)
+                || token
+                    .chars()
+                    .next()
+                    .is_some_and(|character| character.is_ascii_uppercase())
+        })
+}
+
+fn generic_tokens(content: &str) -> Vec<&str> {
+    content
+        .split(|character: char| !is_ident_continue(character))
+        .filter(|token| !token.is_empty())
+        .collect()
+}
+
+fn is_builtin_type(token: &str) -> bool {
+    matches!(
+        token,
+        "bool"
+            | "char"
+            | "str"
+            | "String"
+            | "usize"
+            | "isize"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "u128"
+            | "i8"
+            | "i16"
+            | "i32"
+            | "i64"
+            | "i128"
+            | "f32"
+            | "f64"
+    )
 }
 
 fn should_convert_path(segments: &[String], mode: PathMode, next: Option<char>) -> bool {
@@ -894,8 +938,11 @@ fn is_inline_if_expression(text: &str) -> bool {
 fn starts_item(text: &str, keyword: &str) -> bool {
     text == keyword
         || text.starts_with(&format!("{} ", keyword))
+        || text.starts_with(&format!("{}[", keyword))
         || text.starts_with(&format!("pub {} ", keyword))
+        || text.starts_with(&format!("pub {}[", keyword))
         || text.starts_with(&format!("pub(crate) {} ", keyword))
+        || text.starts_with(&format!("pub(crate) {}[", keyword))
 }
 
 fn is_let(text: &str) -> bool {
@@ -1070,6 +1117,43 @@ fn parse(line: &str) -> Result[i32, String] =
     }
 
     #[test]
+    fn lowers_generic_impl_and_inline_do_match_arm() {
+        let source = r#"
+pub struct Boxed[T]
+    pub value: T
+
+impl[T] Boxed[T]
+    pub fn new(value: T) -> Self = Self{ value }
+
+fn log(value: Result[i32, String]) =
+    match value
+        Ok(number) => do println!("{}", number)
+        Err(error) => error
+"#;
+
+        assert_eq!(
+            rust(source),
+            r#"pub struct Boxed<T> {
+    pub value: T,
+}
+impl<T> Boxed<T> {
+    pub fn new(value: T) -> Self {
+        Self{ value }
+    }
+}
+fn log(value: Result<i32, String>) {
+    match value {
+        Ok(number) => {
+            println!("{}", number);
+        },
+        Err(error) => error,
+    }
+}
+"#
+        );
+    }
+
+    #[test]
     fn preserves_value_dots_and_lowers_path_dots() {
         let source = r#"
 fn test(iter: Iter) =
@@ -1094,20 +1178,22 @@ fn test(iter: Iter) =
     #[test]
     fn keeps_index_expressions_numeric() {
         let source = r#"
-fn example(xs: &[i32]) =
+fn example(xs: &[i32], index: usize) =
     let a = [Foo]
     let b = [3]
     let c = xs[3]
-    c
+    let d = xs[index]
+    c + d
 "#;
 
         assert_eq!(
             rust(source),
-            r#"fn example(xs: &[i32]) {
+            r#"fn example(xs: &[i32], index: usize) {
     let a = [Foo];
     let b = [3];
     let c = xs[3];
-    c
+    let d = xs[index];
+    c + d
 }
 "#
         );

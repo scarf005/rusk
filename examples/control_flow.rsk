@@ -1,0 +1,7 @@
+pub fn sum_until(values: &[i32], limit: usize) -> i32 =
+    let mut index = 0
+    let mut total = 0
+    while index < limit
+        total += values[index]
+        index += 1
+    if total < 0 then 0 else total

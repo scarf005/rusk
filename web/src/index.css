@@ -46,6 +46,10 @@ textarea {
   font: inherit;
 }
 
+.cm-editor {
+  height: 100%;
+}
+
 button,
 select {
   cursor: pointer;

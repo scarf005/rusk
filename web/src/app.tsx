@@ -41,8 +41,8 @@ const stats = computed(() => ({
 
 export function App() {
   const copied = useSignal(false)
-  const inputRef = useRef<HTMLTextAreaElement>(null)
-  const outputRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLElement>(null)
+  const outputRef = useRef<HTMLElement>(null)
   const isScrollingRef = useRef(false)
 
   const handleScroll = (source: "input" | "output") => {
@@ -165,6 +165,7 @@ export function App() {
           <OutputDisplay
             outputRef={outputRef}
             value={outputText.value}
+            language={outputMode.value === "rust" ? "rust" : "json"}
             error={transpiled.value.error}
             onScroll={() => handleScroll("output")}
           />

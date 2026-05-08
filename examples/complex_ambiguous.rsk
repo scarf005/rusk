@@ -1,0 +1,5 @@
+pub fn parse_selected(lines: &[&str], index: usize) -> Result[Vec[i32], std.num.ParseIntError] =
+    let picked = lines[index]
+    let value = picked.parse[i32]()
+    let pair = [value, value + 1]
+    Ok(Vec.from(pair))
