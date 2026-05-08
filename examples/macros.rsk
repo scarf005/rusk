@@ -1,0 +1,8 @@
+pub fn make_message(name: &str) -> String =
+    format!("hello {name}")
+
+pub fn log_values(values: &[i32]) =
+    dbg!(values.len())
+
+pub fn assert_non_empty(values: &[i32]) =
+    assert!(!values.is_empty())

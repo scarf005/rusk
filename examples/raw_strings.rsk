@@ -1,0 +1,5 @@
+pub fn pattern() -> &'static str =
+    r#"^\d{4}-\d{2}-\d{2}$"#
+
+pub fn contains_digit(value: &str) -> bool =
+    value.chars().any(|character| character.is_ascii_digit())

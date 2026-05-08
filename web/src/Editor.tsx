@@ -117,7 +117,10 @@ const extensions = ({
     },
     ".cm-activeLine, .cm-activeLineGutter": { backgroundColor: "#f3f4f6" },
     ".cm-focused": { outline: "none" },
-    ".cm-selectionBackground": { backgroundColor: "#d1d5db !important" },
+    ".cm-focused .cm-selectionBackground, .cm-selectionBackground": {
+      backgroundColor: "#fde047 !important",
+    },
+    ".cm-content ::selection": { backgroundColor: "#fde047" },
   }),
   keymap.of([...defaultKeymap, ...historyKeymap]),
   EditorView.updateListener.of((update) => {

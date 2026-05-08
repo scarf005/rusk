@@ -1,0 +1,10 @@
+pub struct Borrowed['a]
+    pub name: &'a str
+
+impl['a] Borrowed['a]
+    pub fn new(name: &'a str) -> Self = Self{ name }
+
+    pub fn name(&self) -> &'a str = self.name
+
+pub fn choose['a](left: &'a str, right: &'a str, use_left: bool) -> &'a str =
+    if use_left then left else right

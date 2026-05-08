@@ -1,0 +1,5 @@
+pub fn even_squares(values: Vec[i32]) -> Vec[i32] =
+    values.into_iter().filter(|value| value % 2 == 0).map(|value| value * value).collect[Vec[i32]]()
+
+pub fn joined(values: &[&str]) -> String =
+    values.iter().copied().collect[Vec[&str]]().join(",")

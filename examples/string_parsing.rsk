@@ -1,0 +1,5 @@
+pub fn parse_pair(raw: &str) -> Option[(i32, i32)] =
+    let (left, right) = raw.split_once(',')?
+    let left = left.trim().parse[i32]().ok()?
+    let right = right.trim().parse[i32]().ok()?
+    Some((left, right))

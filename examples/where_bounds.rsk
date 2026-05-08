@@ -1,0 +1,5 @@
+pub fn clone_twice[T](value: T) -> (T, T) where T: Clone =
+    (value.clone(), value)
+
+pub fn debug_len[T](values: &[T]) -> usize where T: std.fmt.Debug =
+    values.len()

@@ -1,0 +1,3 @@
+pub fn first_unchecked(values: &[i32]) -> i32 =
+    unsafe
+        *values.get_unchecked(0)
