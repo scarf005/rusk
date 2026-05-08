@@ -370,13 +370,12 @@ fn emit_function(node: &Node, emitter: &mut Emitter) {
         return;
     };
     let indent = spaces(node.indent);
-    emitter.push(
-        node,
-        format!("{}{} {{", indent, lower_signature(signature.trim())),
-    );
+    let signature = signature.trim();
+    let returns_value = function_returns_value(signature);
+    emitter.push(node, format!("{}{} {{", indent, lower_signature(signature)));
     let body = body.trim();
     if body.is_empty() {
-        emit_nodes(&node.children, Context::Block, emitter);
+        emit_function_body(&node.children, returns_value, emitter);
     } else if let Some(expr) = body.strip_prefix("do ") {
         emitter.push_generated(format!(
             "{}{};",
@@ -384,9 +383,21 @@ fn emit_function(node: &Node, emitter: &mut Emitter) {
             lower_expr(expr.trim())
         ));
     } else {
-        emitter.push_generated(format!("{}{}", spaces(node.indent + 4), lower_expr(body)));
+        emitter.push_generated(format!(
+            "{}{}{}",
+            spaces(node.indent + 4),
+            lower_expr(body),
+            if returns_value { "" } else { ";" }
+        ));
     }
     emitter.push_generated(format!("{}}}", indent));
+}
+
+fn emit_function_body(nodes: &[Node], returns_value: bool, emitter: &mut Emitter) {
+    for (index, node) in nodes.iter().enumerate() {
+        let is_tail_value = returns_value && index + 1 == nodes.len();
+        emit_node(node, Context::Block, is_tail_value, emitter);
+    }
 }
 
 fn emit_statement(node: &Node, _context: Context, is_last: bool, emitter: &mut Emitter) {
@@ -907,6 +918,14 @@ fn is_function(text: &str) -> bool {
     text.starts_with("fn ") || text.starts_with("pub fn ") || text.contains(" fn ")
 }
 
+fn function_returns_value(signature: &str) -> bool {
+    let Some((_, return_type)) = signature.rsplit_once("->") else {
+        return false;
+    };
+    let return_type = return_type.trim();
+    !return_type.is_empty() && return_type != "()"
+}
+
 fn is_match(text: &str) -> bool {
     text.starts_with("match ")
 }
@@ -1178,7 +1197,7 @@ fn test(iter: Iter) =
     #[test]
     fn keeps_index_expressions_numeric() {
         let source = r#"
-fn example(xs: &[i32], index: usize) =
+fn example(xs: &[i32], index: usize) -> i32 =
     let a = [Foo]
     let b = [3]
     let c = xs[3]
@@ -1188,7 +1207,7 @@ fn example(xs: &[i32], index: usize) =
 
         assert_eq!(
             rust(source),
-            r#"fn example(xs: &[i32], index: usize) {
+            r#"fn example(xs: &[i32], index: usize) -> i32 {
     let a = [Foo];
     let b = [3];
     let c = xs[3];
@@ -1221,6 +1240,78 @@ fn clamp(value: i32, min: i32, max: i32) -> i32 =
 }
 "#
         );
+    }
+
+    #[test]
+    fn infers_unit_function_tail_statement() {
+        let source = r#"
+pub fn main() =
+    println!("hello")
+
+pub fn id(value: i32) -> i32 =
+    value
+"#;
+
+        assert_eq!(
+            rust(source),
+            r#"pub fn main() {
+    println!("hello");
+}
+pub fn id(value: i32) -> i32 {
+    value
+}
+"#
+        );
+    }
+
+    #[test]
+    fn examples_transpile_to_compilable_rust() {
+        use std::{env, fs, path::PathBuf, process::Command};
+
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let examples_dir = manifest_dir.join("../../examples");
+        let mut examples = fs::read_dir(&examples_dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.extension().is_some_and(|extension| extension == "rsk"))
+            .collect::<Vec<_>>();
+        examples.sort();
+        assert!(!examples.is_empty());
+
+        let out_dir = env::temp_dir().join(format!("rusk-example-tests-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&out_dir);
+        fs::create_dir_all(&out_dir).unwrap();
+
+        for example in examples {
+            let source = fs::read_to_string(&example).unwrap();
+            let output = transpile(&source).unwrap_or_else(|error| {
+                panic!("failed to transpile {}: {error}", example.display())
+            });
+            let rust_path = out_dir.join(format!(
+                "{}.rs",
+                example
+                    .file_stem()
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('-', "_")
+            ));
+            fs::write(&rust_path, output.rust).unwrap();
+
+            let status = Command::new("rustc")
+                .arg("--edition=2024")
+                .arg("--crate-type=lib")
+                .arg("--emit=metadata")
+                .arg("-o")
+                .arg(out_dir.join("out.rmeta"))
+                .arg(&rust_path)
+                .status()
+                .unwrap_or_else(|error| {
+                    panic!("failed to run rustc for {}: {error}", example.display())
+                });
+            assert!(status.success(), "rustc failed for {}", example.display());
+        }
+
+        let _ = fs::remove_dir_all(&out_dir);
     }
 
     #[test]

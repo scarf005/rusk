@@ -2,8 +2,8 @@
 
 use std.collections.HashMap
 
-pub fn counts() -> std.collections.HashMap[String, i32] =
-    let mut map = std.collections.HashMap.new()
+pub fn counts() -> HashMap[String, i32] =
+    let mut map = HashMap.new()
     do map.insert("one".to_string(), 1)
     do map.insert("two".to_string(), 2)
     map

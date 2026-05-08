@@ -8,4 +8,4 @@ impl Named for User
     fn name(&self) -> &str = &self.name
 
 pub fn greet(user: &impl Named) =
-    do println!("hello {}", user.name())
+    println!("hello {}", user.name())
