@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeSet, HashMap},
     fs,
+    path::{Path, PathBuf},
     process::Stdio,
     sync::{
         Arc,
@@ -25,6 +26,7 @@ use tower_lsp::{
         Location, LocationLink, MarkupContent, MarkupKind, MessageType, OneOf, Position, Range,
         ServerCapabilities, SymbolKind, TextDocumentContentChangeEvent, TextDocumentItem,
         TextDocumentSyncCapability, TextDocumentSyncKind, Url, VersionedTextDocumentIdentifier,
+        WorkspaceFolder,
     },
 };
 
@@ -184,9 +186,10 @@ impl LanguageServer for Backend {
 
         if let Some(rust_analyzer) = self.rust_analyzer.read().await.as_ref()
             && let Some(definition) = rust_analyzer.goto_definition(text, params).await
+            && let Some(rust_uri) = rust_analyzer.rust_uri_for_rusk_uri(&uri)
         {
             return Ok(Some(rust_definition_to_rusk_definition(
-                text, &uri, definition,
+                text, &uri, &rust_uri, definition,
             )));
         }
 
@@ -223,7 +226,15 @@ impl Backend {
         }
 
         let params = self.initialize_params.read().await.as_ref().cloned()?;
-        match RustAnalyzerClient::spawn(params).await {
+        let source_root_uri = source_root_uri(&params)?;
+        let rust_root_uri = target_rusk_root_uri(&source_root_uri)?;
+        match RustAnalyzerClient::spawn(
+            rust_initialize_params(params, &rust_root_uri),
+            source_root_uri,
+            rust_root_uri,
+        )
+        .await
+        {
             Ok(rust_analyzer) => {
                 let rust_analyzer = Arc::new(rust_analyzer);
                 rust_analyzer
@@ -248,12 +259,13 @@ impl Backend {
     }
 
     async fn open_rust_document(&self, uri: &Url, text: &str, version: i32) {
-        let Some(rust_uri) = rust_uri_for_rusk_uri(uri) else {
+        let Some(rust_uri) = self.rust_uri_for_rusk_uri(uri).await else {
             return;
         };
         let Ok(output) = transpile(text) else {
             return;
         };
+        self.copy_generated_cargo_manifests(uri).await;
         write_generated_rust_file(&rust_uri, &output.rust);
         let Some(rust_analyzer) = self.ensure_rust_analyzer().await else {
             return;
@@ -275,12 +287,13 @@ impl Backend {
     }
 
     async fn change_rust_document(&self, uri: &Url, text: &str, version: i32) {
-        let Some(rust_uri) = rust_uri_for_rusk_uri(uri) else {
+        let Some(rust_uri) = self.rust_uri_for_rusk_uri(uri).await else {
             return;
         };
         let Ok(output) = transpile(text) else {
             return;
         };
+        self.copy_generated_cargo_manifests(uri).await;
         write_generated_rust_file(&rust_uri, &output.rust);
         let Some(rust_analyzer) = self.ensure_rust_analyzer().await else {
             return;
@@ -308,7 +321,7 @@ impl Backend {
         let Some(rust_analyzer) = self.rust_analyzer.read().await.as_ref().cloned() else {
             return;
         };
-        let Some(rust_uri) = rust_uri_for_rusk_uri(uri) else {
+        let Some(rust_uri) = self.rust_uri_for_rusk_uri(uri).await else {
             return;
         };
 
@@ -320,6 +333,24 @@ impl Backend {
                 },
             )
             .await;
+    }
+
+    async fn rust_uri_for_rusk_uri(&self, uri: &Url) -> Option<Url> {
+        let params = self.initialize_params.read().await;
+        let source_root_uri = source_root_uri(params.as_ref()?)?;
+        let rust_root_uri = target_rusk_root_uri(&source_root_uri)?;
+        rust_uri_for_rusk_uri(uri, &source_root_uri, &rust_root_uri)
+    }
+
+    async fn copy_generated_cargo_manifests(&self, uri: &Url) {
+        let params = self.initialize_params.read().await;
+        let Some(source_root_uri) = params.as_ref().and_then(source_root_uri) else {
+            return;
+        };
+        let Some(rust_root_uri) = target_rusk_root_uri(&source_root_uri) else {
+            return;
+        };
+        copy_generated_cargo_manifests(uri, &source_root_uri, &rust_root_uri);
     }
 
     async fn publish_diagnostics(&self, uri: Url, text: String) {
@@ -344,11 +375,17 @@ struct RustAnalyzerClient {
     sender: mpsc::UnboundedSender<serde_json::Value>,
     pending: Arc<Mutex<HashMap<u64, oneshot::Sender<serde_json::Value>>>>,
     next_id: AtomicU64,
+    source_root_uri: Url,
+    rust_root_uri: Url,
     _child: Arc<Mutex<tokio::process::Child>>,
 }
 
 impl RustAnalyzerClient {
-    async fn spawn(params: InitializeParams) -> std::io::Result<Self> {
+    async fn spawn(
+        params: InitializeParams,
+        source_root_uri: Url,
+        rust_root_uri: Url,
+    ) -> std::io::Result<Self> {
         let mut child = Command::new("rust-analyzer")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -386,6 +423,8 @@ impl RustAnalyzerClient {
             sender,
             pending,
             next_id: AtomicU64::new(1),
+            source_root_uri,
+            rust_root_uri,
             _child: Arc::new(Mutex::new(child)),
         };
         client.request("initialize", params).await.ok_or_else(|| {
@@ -399,7 +438,7 @@ impl RustAnalyzerClient {
 
     async fn hover(&self, text: &str, mut params: HoverParams) -> Option<Hover> {
         params.text_document_position_params.text_document.uri =
-            rust_uri_for_rusk_uri(&params.text_document_position_params.text_document.uri)?;
+            self.rust_uri_for_rusk_uri(&params.text_document_position_params.text_document.uri)?;
         params.text_document_position_params.position =
             rusk_position_to_rust_position(text, params.text_document_position_params.position)?;
         self.request("textDocument/hover", params)
@@ -413,7 +452,7 @@ impl RustAnalyzerClient {
         mut params: GotoDefinitionParams,
     ) -> Option<GotoDefinitionResponse> {
         params.text_document_position_params.text_document.uri =
-            rust_uri_for_rusk_uri(&params.text_document_position_params.text_document.uri)?;
+            self.rust_uri_for_rusk_uri(&params.text_document_position_params.text_document.uri)?;
         params.text_document_position_params.position =
             rusk_position_to_rust_position(text, params.text_document_position_params.position)?;
         self.request("textDocument/definition", params)
@@ -427,12 +466,16 @@ impl RustAnalyzerClient {
         mut params: CompletionParams,
     ) -> Option<CompletionResponse> {
         params.text_document_position.text_document.uri =
-            rust_uri_for_rusk_uri(&params.text_document_position.text_document.uri)?;
+            self.rust_uri_for_rusk_uri(&params.text_document_position.text_document.uri)?;
         params.text_document_position.position =
             rusk_position_to_rust_position(text, params.text_document_position.position)?;
         self.request("textDocument/completion", params)
             .await
             .and_then(|value| serde_json::from_value(value).ok())
+    }
+
+    fn rust_uri_for_rusk_uri(&self, uri: &Url) -> Option<Url> {
+        rust_uri_for_rusk_uri(uri, &self.source_root_uri, &self.rust_root_uri)
     }
 
     async fn notify<T: serde::Serialize>(&self, method: &str, params: T) {
@@ -532,10 +575,91 @@ async fn write_lsp_message<W: tokio::io::AsyncWrite + Unpin>(
     writer.flush().await
 }
 
-fn rust_uri_for_rusk_uri(uri: &Url) -> Option<Url> {
-    let mut path = uri.to_file_path().ok()?;
+fn source_root_uri(params: &InitializeParams) -> Option<Url> {
+    params.root_uri.clone().or_else(|| {
+        params
+            .workspace_folders
+            .as_ref()
+            .and_then(|folders| folders.first())
+            .map(|folder| folder.uri.clone())
+    })
+}
+
+fn target_rusk_root_uri(source_root_uri: &Url) -> Option<Url> {
+    let mut path = source_root_uri.to_file_path().ok()?;
+    path.push("target");
+    path.push("rusk");
+    Url::from_directory_path(path).ok()
+}
+
+fn rust_initialize_params(mut params: InitializeParams, rust_root_uri: &Url) -> InitializeParams {
+    params.root_uri = Some(rust_root_uri.clone());
+    params.workspace_folders = Some(vec![WorkspaceFolder {
+        uri: rust_root_uri.clone(),
+        name: "rusk-generated".to_string(),
+    }]);
+    params
+}
+
+fn rust_uri_for_rusk_uri(uri: &Url, source_root_uri: &Url, rust_root_uri: &Url) -> Option<Url> {
+    let source_path = uri.to_file_path().ok()?;
+    let source_root = source_root_uri.to_file_path().ok()?;
+    let rust_root = rust_root_uri.to_file_path().ok()?;
+    let relative = source_path
+        .strip_prefix(&source_root)
+        .ok()
+        .map(Path::to_path_buf)
+        .or_else(|| source_path.file_name().map(PathBuf::from))?;
+    let mut path = rust_root.join(relative);
     path.set_extension("rs");
     Url::from_file_path(path).ok()
+}
+
+fn copy_generated_cargo_manifests(uri: &Url, source_root_uri: &Url, rust_root_uri: &Url) {
+    let Ok(source_path) = uri.to_file_path() else {
+        return;
+    };
+    let Ok(source_root) = source_root_uri.to_file_path() else {
+        return;
+    };
+    let Ok(rust_root) = rust_root_uri.to_file_path() else {
+        return;
+    };
+    let Some(mut current) = source_path.parent() else {
+        return;
+    };
+
+    while current.starts_with(&source_root) {
+        let manifest = current.join("Cargo.toml");
+        if manifest.is_file()
+            && let Ok(relative) = manifest.strip_prefix(&source_root)
+        {
+            copy_manifest_if_changed(&manifest, &rust_root.join(relative), current == source_root);
+        }
+        if current == source_root {
+            break;
+        }
+        let Some(parent) = current.parent() else {
+            break;
+        };
+        current = parent;
+    }
+}
+
+fn copy_manifest_if_changed(source: &Path, destination: &Path, is_root_manifest: bool) {
+    let Ok(mut content) = fs::read_to_string(source) else {
+        return;
+    };
+    if is_root_manifest && !content.lines().any(|line| line.trim() == "[workspace]") {
+        content = format!("[workspace]\n\n{content}");
+    }
+    if fs::read_to_string(destination).is_ok_and(|existing| existing == content) {
+        return;
+    }
+    if let Some(parent) = destination.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let _ = fs::write(destination, content);
 }
 
 fn write_generated_rust_file(uri: &Url, rust: &str) {
@@ -609,29 +733,37 @@ fn rust_position_to_rusk_position(text: &str, position: Position) -> Position {
 fn rust_definition_to_rusk_definition(
     text: &str,
     rusk_uri: &Url,
+    rust_uri: &Url,
     definition: GotoDefinitionResponse,
 ) -> GotoDefinitionResponse {
     match definition {
-        GotoDefinitionResponse::Scalar(location) => {
-            GotoDefinitionResponse::Scalar(rust_location_to_rusk_location(text, rusk_uri, location))
-        }
+        GotoDefinitionResponse::Scalar(location) => GotoDefinitionResponse::Scalar(
+            rust_location_to_rusk_location(text, rusk_uri, rust_uri, location),
+        ),
         GotoDefinitionResponse::Array(locations) => GotoDefinitionResponse::Array(
             locations
                 .into_iter()
-                .map(|location| rust_location_to_rusk_location(text, rusk_uri, location))
+                .map(|location| rust_location_to_rusk_location(text, rusk_uri, rust_uri, location))
                 .collect(),
         ),
         GotoDefinitionResponse::Link(links) => GotoDefinitionResponse::Link(
             links
                 .into_iter()
-                .map(|link| rust_location_link_to_rusk_location_link(text, rusk_uri, link))
+                .map(|link| {
+                    rust_location_link_to_rusk_location_link(text, rusk_uri, rust_uri, link)
+                })
                 .collect(),
         ),
     }
 }
 
-fn rust_location_to_rusk_location(text: &str, rusk_uri: &Url, mut location: Location) -> Location {
-    if rust_uri_for_rusk_uri(rusk_uri).as_ref() == Some(&location.uri) {
+fn rust_location_to_rusk_location(
+    text: &str,
+    rusk_uri: &Url,
+    rust_uri: &Url,
+    mut location: Location,
+) -> Location {
+    if rust_uri == &location.uri {
         location.uri = rusk_uri.clone();
         location.range = rust_range_to_rusk_range(text, location.range);
     }
@@ -641,9 +773,10 @@ fn rust_location_to_rusk_location(text: &str, rusk_uri: &Url, mut location: Loca
 fn rust_location_link_to_rusk_location_link(
     text: &str,
     rusk_uri: &Url,
+    rust_uri: &Url,
     mut link: LocationLink,
 ) -> LocationLink {
-    if rust_uri_for_rusk_uri(rusk_uri).as_ref() == Some(&link.target_uri) {
+    if rust_uri == &link.target_uri {
         link.target_uri = rusk_uri.clone();
         link.target_range = rust_range_to_rusk_range(text, link.target_range);
         link.target_selection_range = rust_range_to_rusk_range(text, link.target_selection_range);
@@ -1177,6 +1310,21 @@ mod tests {
         assert!(items.iter().any(|item| item.label == "User"));
         assert!(items.iter().any(|item| item.label == "greet"));
         assert!(items.iter().any(|item| item.label == "user"));
+    }
+
+    #[test]
+    fn maps_rusk_files_to_target_rusk() {
+        let source_root = std::env::temp_dir().join("rusk-lsp-source-root");
+        let source_root_uri = Url::from_directory_path(&source_root).unwrap();
+        let rust_root_uri = target_rusk_root_uri(&source_root_uri).unwrap();
+        let rusk_uri = Url::from_file_path(source_root.join("src/main.rsk")).unwrap();
+
+        let rust_uri = rust_uri_for_rusk_uri(&rusk_uri, &source_root_uri, &rust_root_uri).unwrap();
+
+        assert_eq!(
+            rust_uri.to_file_path().unwrap(),
+            source_root.join("target/rusk/src/main.rs")
+        );
     }
 }
 
