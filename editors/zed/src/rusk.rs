@@ -1,6 +1,8 @@
 use zed_extension_api::{self as zed, Result, settings::LspSettings};
 
 const RUSK_LSP: &str = "rusk-lsp";
+const LOCAL_RUSK_LSP_SOURCE: &str = "crates/rusk/src/bin/rusk-lsp.rs";
+const LOCAL_RUSK_MANIFEST: &str = "crates/rusk/Cargo.toml";
 
 struct RuskExtension;
 
@@ -30,6 +32,25 @@ impl zed::Extension for RuskExtension {
             Ok(zed::Command {
                 command: path,
                 args,
+                env: Default::default(),
+            })
+        } else if worktree.read_text_file(LOCAL_RUSK_LSP_SOURCE).is_ok()
+            && let Some(path) = worktree.which("cargo")
+        {
+            Ok(zed::Command {
+                command: path,
+                args: [
+                    "run".to_string(),
+                    "--quiet".to_string(),
+                    "--manifest-path".to_string(),
+                    format!("{}/{}", worktree.root_path(), LOCAL_RUSK_MANIFEST),
+                    "--bin".to_string(),
+                    RUSK_LSP.to_string(),
+                    "--".to_string(),
+                ]
+                .into_iter()
+                .chain(args)
+                .collect(),
                 env: Default::default(),
             })
         } else if let Some(path) = worktree.which(RUSK_LSP) {
