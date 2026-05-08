@@ -1,6 +1,6 @@
 use std::{
     env, fs,
-    io::{self, Read},
+    io::{self, IsTerminal, Read},
     path::PathBuf,
     process,
 };
@@ -23,6 +23,11 @@ fn main() {
 
 fn run(raw_args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     let args = parse_args(raw_args)?;
+    if args.input.is_none() && io::stdin().is_terminal() {
+        print_help();
+        return Ok(());
+    }
+
     let source = read_source(args.input.as_ref())?;
     let output = transpile(&source)?;
 
@@ -95,6 +100,6 @@ fn read_source(path: Option<&PathBuf>) -> Result<String, Box<dyn std::error::Err
 
 fn print_help() {
     println!(
-        "rusk - indentation-based Rust syntax transpiler\n\nUSAGE:\n    rusk [transpile] [INPUT] [-o OUTPUT] [--source-map SOURCE_MAP]\n\nIf INPUT is omitted, rusk reads RSML/Rusk source from stdin and writes Rust to stdout."
+        "rusk - indentation-based Rust syntax transpiler\n\nUSAGE:\n    rusk [transpile] [INPUT.rsk] [-o OUTPUT.rs] [--source-map SOURCE_MAP]\n\nIf INPUT is omitted, rusk reads Rusk source from stdin when stdin is piped; otherwise it prints this help."
     );
 }

@@ -5,9 +5,9 @@
 ## Usage
 
 ```sh
-rusk input.rsml -o output.rs
-rusk transpile input.rsml --source-map output.map.json
-cat input.rsml | rusk
+rusk input.rsk -o output.rs
+rusk transpile input.rsk --source-map output.map.json
+cat input.rsk | rusk
 ```
 
 ## Supported MVP syntax
@@ -24,7 +24,7 @@ cat input.rsml | rusk
 
 ## Example
 
-```rsml
+```rsk
 #derive(Debug, Clone)
 pub struct User
     pub id: u64
