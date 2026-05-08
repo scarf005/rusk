@@ -1,12 +1,8 @@
 import { useRef } from "preact/hooks"
 import { computed, signal, useSignal } from "@preact/signals"
-import {
-  rusk_version,
-  transpile_source_map_json,
-  transpile_to_rust,
-} from "./wasm/rusk.js"
+import { transpile_source_map_json, transpile_to_rust } from "./wasm/rusk.js"
 import { InputEditor, OutputDisplay } from "./Editor.tsx"
-import { Banner, Header, Layout, Main, Panel } from "./Layout.tsx"
+import { Header, Layout, Main, Panel } from "./Layout.tsx"
 import { TEMPLATE_NAMES, TemplateName, TEMPLATES } from "./constants.ts"
 
 type OutputMode = "rust" | "source-map"
@@ -135,16 +131,6 @@ export function App() {
               </svg>
             </div>
           </div>
-
-          <a
-            href="https://github.com/denoland/wasmbuild"
-            class="flex-none px-6 py-3 font-bold text-xs md:text-sm uppercase transition-colors whitespace-nowrap bg-white text-black hover:bg-black hover:text-white border-r-2 border-black"
-          >
-            WASM
-          </a>
-          <div class="flex-none px-4 py-3 text-xs md:text-sm font-bold uppercase bg-white text-black">
-            v{rusk_version()}
-          </div>
         </div>
       </Header>
 
@@ -182,10 +168,6 @@ export function App() {
             error={transpiled.value.error}
             onScroll={() => handleScroll("output")}
           />
-          <Banner>
-            Rusk is compiled to WebAssembly with denoland/wasmbuild and wired to
-            Preact Signals for instant source-to-source transpilation.
-          </Banner>
         </Panel>
       </Main>
     </Layout>

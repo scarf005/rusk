@@ -41,9 +41,3 @@ export const Panel = ({
     </div>
   </section>
 )
-
-export const Banner = ({ children }: { children: ComponentChildren }) => (
-  <div class="absolute inset-x-4 bottom-4 border-2 border-black bg-white p-4 shadow-[6px_6px_0_0_rgba(0,0,0,1)] text-sm font-bold">
-    {children}
-  </div>
-)

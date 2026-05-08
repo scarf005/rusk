@@ -14,8 +14,9 @@ cat input.rsk | rusk
 
 - indentation blocks for `struct`, `enum`, `trait`, `impl`, `mod`, `fn`, `if`, `else`, `match`, loops, `unsafe`, and `async`
 - function bodies with `=`
+- `if condition then expr else expr` expressions
 - `do expr` for semicolon/discard statements
-- `#derive(...)` / `#!allow(...)` attribute shorthand
+- Rust-style `#[...]` / `#![...]` attributes
 - Scala-style generic brackets in type positions, e.g. `Result[T, E]` -> `Result<T, E>`
 - method generic calls, e.g. `value.parse[i32]()` -> `value.parse::<i32>()`
 - dotted path lowering for type paths and obvious item paths, e.g. `std.io.Read` -> `std::io::Read`, `Foo.new()` -> `Foo::new()`
@@ -25,7 +26,7 @@ cat input.rsk | rusk
 ## Example
 
 ```rsk
-#derive(Debug, Clone)
+#[derive(Debug, Clone)]
 pub struct User
     pub id: u64
     pub name: String
@@ -37,6 +38,10 @@ impl User
             name = name
 
     pub fn display_name(&self) -> &str = &self.name
+
+pub fn main() =
+    let user = User.new(1, "Ada".to_string())
+    do println!("{}", user.display_name())
 ```
 
 Generated Rust:
@@ -57,6 +62,10 @@ impl User {
     pub fn display_name(&self) -> &str {
         &self.name
     }
+}
+pub fn main() {
+    let user = User::new(1, "Ada".to_string());
+    println!("{}", user.display_name());
 }
 ```
 

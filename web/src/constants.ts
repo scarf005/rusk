@@ -1,5 +1,5 @@
 export const TEMPLATES = {
-  "Hello User": `#derive(Debug, Clone)
+  "Hello User": `#[derive(Debug, Clone)]
 pub struct User
     pub id: u64
     pub name: String
@@ -11,6 +11,10 @@ impl User
             name = name
 
     pub fn display_name(&self) -> &str = &self.name
+
+pub fn main() =
+    let user = User.new(1, "Ada".to_string())
+    do println!("{}", user.display_name())
 `,
   "Result Flow":
     `pub fn parse_port(raw: &str) -> Result[u16, std.num.ParseIntError] =
@@ -22,16 +26,11 @@ pub fn main() =
         Ok(port) => do println!("listening on {port}")
         Err(error) => do eprintln!("invalid port: {error}")
 `,
-  "Module Layout": `#!allow(dead_code)
+  "Module Layout": `#![allow(dead_code)]
 
 pub mod math
     pub fn clamp(value: i32, min: i32, max: i32) -> i32 =
-        if value < min
-            min
-        else if value > max
-            max
-        else
-            value
+        if value < min then min else if value > max then max else value
 
 pub trait Render
     fn render(&self) -> String

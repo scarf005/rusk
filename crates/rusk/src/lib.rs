@@ -46,11 +46,6 @@ mod wasm_api {
             .map_err(error_to_js_value)
     }
 
-    #[wasm_bindgen]
-    pub fn rusk_version() -> String {
-        env!("CARGO_PKG_VERSION").to_string()
-    }
-
     fn error_to_js_value(error: TranspileError) -> JsValue {
         JsValue::from_str(&error.to_string())
     }
@@ -468,10 +463,132 @@ fn lower_field_or_variant(text: &str) -> String {
 }
 
 fn lower_expr(text: &str) -> String {
+    lower_if_then_else(text).unwrap_or_else(|| lower_basic_expr(text))
+}
+
+fn lower_basic_expr(text: &str) -> String {
     replace_dotted_paths(
         &replace_square_generics(text, GenericMode::Expr),
         PathMode::Expr,
     )
+}
+
+fn lower_if_then_else(text: &str) -> Option<String> {
+    let (prefix, condition_and_body) = if let Some(rest) = text.strip_prefix("if ") {
+        ("if", rest)
+    } else if let Some(rest) = text.strip_prefix("else if ") {
+        ("else if", rest)
+    } else {
+        return None;
+    };
+
+    let Some(then_index) = find_top_level_keyword(condition_and_body, "then") else {
+        return None;
+    };
+
+    let condition = condition_and_body[..then_index].trim();
+    let body = condition_and_body[then_index + "then".len()..].trim();
+    if body.is_empty() {
+        return Some(format!("{} {}", prefix, lower_basic_expr(condition)));
+    }
+
+    let condition = lower_basic_expr(condition);
+    if let Some(else_index) = find_else_for_then_body(body) {
+        let then_expr = body[..else_index].trim();
+        let else_expr = body[else_index + "else".len()..].trim();
+        Some(format!(
+            "{} {} {{ {} }} else {{ {} }}",
+            prefix,
+            condition,
+            lower_expr(then_expr),
+            lower_expr(else_expr)
+        ))
+    } else {
+        Some(format!(
+            "{} {} {{ {} }}",
+            prefix,
+            condition,
+            lower_expr(body)
+        ))
+    }
+}
+
+fn find_else_for_then_body(text: &str) -> Option<usize> {
+    let mut round = 0usize;
+    let mut square = 0usize;
+    let mut curly = 0usize;
+    let mut nested_if_count = 0usize;
+    let mut index = 0usize;
+
+    while index < text.len() {
+        let character = text[index..].chars().next()?;
+        match character {
+            '(' => round += 1,
+            ')' => round = round.saturating_sub(1),
+            '[' => square += 1,
+            ']' => square = square.saturating_sub(1),
+            '{' => curly += 1,
+            '}' => curly = curly.saturating_sub(1),
+            _ => {}
+        }
+
+        if round == 0 && square == 0 && curly == 0 {
+            if text[index..].starts_with("if") && is_keyword_boundary(text, index, "if".len()) {
+                nested_if_count += 1;
+            } else if text[index..].starts_with("else")
+                && is_keyword_boundary(text, index, "else".len())
+            {
+                if nested_if_count == 0 {
+                    return Some(index);
+                }
+                nested_if_count -= 1;
+            }
+        }
+
+        index += character.len_utf8();
+    }
+
+    None
+}
+
+fn find_top_level_keyword(text: &str, keyword: &str) -> Option<usize> {
+    let mut round = 0usize;
+    let mut square = 0usize;
+    let mut curly = 0usize;
+    let mut index = 0usize;
+
+    while index < text.len() {
+        let character = text[index..].chars().next()?;
+        match character {
+            '(' => round += 1,
+            ')' => round = round.saturating_sub(1),
+            '[' => square += 1,
+            ']' => square = square.saturating_sub(1),
+            '{' => curly += 1,
+            '}' => curly = curly.saturating_sub(1),
+            _ => {}
+        }
+
+        if round == 0
+            && square == 0
+            && curly == 0
+            && text[index..].starts_with(keyword)
+            && is_keyword_boundary(text, index, keyword.len())
+        {
+            return Some(index);
+        }
+
+        index += character.len_utf8();
+    }
+
+    None
+}
+
+fn is_keyword_boundary(text: &str, index: usize, len: usize) -> bool {
+    let before = text[..index].chars().next_back();
+    let after = text[index + len..].chars().next();
+    before.is_none_or(|character| !is_ident_continue(character))
+        && after.is_none_or(|character| !is_ident_continue(character))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -635,13 +752,27 @@ fn is_match(text: &str) -> bool {
 }
 
 fn is_control(text: &str) -> bool {
-    text.starts_with("if ")
-        || text.starts_with("else")
+    (text.starts_with("if ") && !is_inline_if_expression(text))
+        || (text.starts_with("else if ") && !is_inline_if_expression(text))
+        || (text.starts_with("else") && !text.starts_with("else if "))
         || text == "loop"
         || text.starts_with("while ")
         || text.starts_with("for ")
         || text == "unsafe"
         || text == "async"
+}
+
+fn is_inline_if_expression(text: &str) -> bool {
+    let Some(rest) = text
+        .strip_prefix("if ")
+        .or_else(|| text.strip_prefix("else if "))
+    else {
+        return false;
+    };
+    let Some(then_index) = find_top_level_keyword(rest, "then") else {
+        return false;
+    };
+    !rest[then_index + "then".len()..].trim().is_empty()
 }
 
 fn starts_item(text: &str, keyword: &str) -> bool {
@@ -730,7 +861,7 @@ mod tests {
     #[test]
     fn lowers_struct_impl_and_inline_functions() {
         let source = r#"
-#derive(Debug, Clone)
+#[derive(Debug, Clone)]
 pub struct User
     pub id: u64
     pub name: String
@@ -831,6 +962,30 @@ fn example(xs: &[i32]) =
     let b = [3];
     let c = xs[3];
     c
+}
+"#
+        );
+    }
+
+    #[test]
+    fn lowers_if_then_else_expression() {
+        let source = r#"
+fn clamp(value: i32, min: i32, max: i32) -> i32 =
+    if value < min then min else if value > max then max else value
+"#;
+
+        assert_eq!(
+            rust(source),
+            r#"fn clamp(value: i32, min: i32, max: i32) -> i32 {
+    if value < min { min } else { if value > max { max } else { value } }
+}
+"#
+        );
+
+        assert_eq!(
+            rust("fn choose(a: bool, b: bool) -> i32 = if a then if b then 1 else 2 else 3\n"),
+            r#"fn choose(a: bool, b: bool) -> i32 {
+    if a { if b { 1 } else { 2 } } else { 3 }
 }
 "#
         );
