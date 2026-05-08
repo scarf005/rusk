@@ -103,3 +103,5 @@ cargo install --path crates/rusk --bin rusk-lsp
 ## Current limits
 
 This is a compiler-front-end MVP, not a full Rust replacement yet. It intentionally avoids proc-macro DSL parsing, rust-analyzer proxying, Zed extension packaging, and full type-aware dot disambiguation.
+
+Dot and bracket disambiguation is heuristic in expression positions. Type signatures are lowered as type syntax, so `Result[foo, err]` becomes `Result<foo, err>`, but expression paths use Rust naming conventions: `Vec.from(pair)` becomes `Vec::from(pair)` because `Vec` starts with an uppercase letter, while `picked.parse[i32]()` becomes `picked.parse::<i32>()` and keeps the receiver dot. Lowercase type paths in expression positions are ambiguous and may need Rust's escape hatch syntax, e.g. write `foo::new()` instead of `foo.new()` when `foo` is a lowercase type or module path.
