@@ -2,9 +2,7 @@ import { Ref } from "preact"
 import { useEffect, useRef } from "preact/hooks"
 import { EditorState, Extension } from "@codemirror/state"
 import {
-  drawSelection,
   EditorView,
-  highlightActiveLine,
   highlightSpecialChars,
   keymap,
   lineNumbers,
@@ -91,8 +89,6 @@ const extensions = ({
   lineNumbers(),
   highlightSpecialChars(),
   history(),
-  drawSelection(),
-  highlightActiveLine(),
   syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
   languageExtension(language),
   EditorState.readOnly.of(!editable),
@@ -115,12 +111,11 @@ const extensions = ({
       borderRight: "2px solid #000000",
       color: "#6b7280",
     },
-    ".cm-activeLine, .cm-activeLineGutter": { backgroundColor: "#f3f4f6" },
     ".cm-focused": { outline: "none" },
-    ".cm-focused .cm-selectionBackground, .cm-selectionBackground": {
-      backgroundColor: "#fde047 !important",
+    ".cm-content ::selection": {
+      backgroundColor: "#000000",
+      color: "#ffffff",
     },
-    ".cm-content ::selection": { backgroundColor: "#fde047" },
   }),
   keymap.of([...defaultKeymap, ...historyKeymap]),
   EditorView.updateListener.of((update) => {

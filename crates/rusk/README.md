@@ -8,6 +8,8 @@
 rusk input.rsk -o output.rs
 rusk transpile input.rsk --source-map output.map.json
 cat input.rsk | rusk
+rusk run
+rusk cargo test
 rusk-lsp
 ```
 
@@ -64,6 +66,18 @@ pub fn main() {
     println!("{}", user.display_name());
 }
 ```
+
+## Cargo wrapper
+
+`rusk` can wrap common Cargo commands. It transpiles `.rsk` files under Cargo source roots (`src`, `examples`, `tests`, `benches`, and `build.rsk`) into temporary generated `.rs` files, runs Cargo, then removes the generated files.
+
+```sh
+rusk run        # cargo run
+rusk check      # cargo check
+rusk cargo test # cargo test
+```
+
+Existing non-generated `.rs` files are never overwritten.
 
 ## Language Server
 

@@ -1,6 +1,5 @@
-import { useEffect, useRef } from "preact/hooks"
+import { useRef } from "preact/hooks"
 import { computed, signal, useSignal } from "@preact/signals"
-import { useLocation, useRoute } from "wouter-preact"
 import { transpile_syntax_tree_json, transpile_to_rust } from "./wasm/rusk.js"
 import { InputEditor, OutputDisplay } from "./Editor.tsx"
 import { Header, Layout, Main, Panel } from "./Layout.tsx"
@@ -8,8 +7,6 @@ import {
   DEFAULT_EXAMPLE_NAME,
   EXAMPLE_NAMES,
   ExampleName,
-  exampleNameFromSlug,
-  examplePath,
   exampleSource,
 } from "./constants.ts"
 
@@ -20,14 +17,22 @@ const inputCode = signal<string>(exampleSource(DEFAULT_EXAMPLE_NAME))
 const outputMode = signal<OutputMode>("rust")
 
 const transpiled = computed(() => {
+  const started = performance.now()
   try {
+    const rustStarted = performance.now()
     const rust = transpile_to_rust(inputCode.value)
+    const rustMs = performance.now() - rustStarted
+    const syntaxTreeStarted = performance.now()
     const syntaxTree = transpile_syntax_tree_json(inputCode.value)
-    return { rust, syntaxTree, error: "" }
+    const syntaxTreeMs = performance.now() - syntaxTreeStarted
+    return { rust, syntaxTree, rustMs, syntaxTreeMs, error: "" }
   } catch (error) {
+    const elapsedMs = performance.now() - started
     return {
       rust: "",
       syntaxTree: "",
+      rustMs: elapsedMs,
+      syntaxTreeMs: elapsedMs,
       error: stringifyError(error),
     }
   }
@@ -45,11 +50,12 @@ const outputText = computed(() => {
 const stats = computed(() => ({
   sourceLines: countLines(inputCode.value),
   outputLines: countLines(outputText.value),
+  outputMs: outputMode.value === "rust"
+    ? transpiled.value.rustMs
+    : transpiled.value.syntaxTreeMs,
 }))
 
 export function App() {
-  const [location, navigate] = useLocation()
-  const [isExampleRoute, params] = useRoute("/examples/:slug")
   const copied = useSignal(false)
   const inputRef = useRef<HTMLElement>(null)
   const outputRef = useRef<HTMLElement>(null)
@@ -61,31 +67,6 @@ export function App() {
     inputRef.current?.scrollTo({ top: 0 })
     outputRef.current?.scrollTo({ top: 0 })
   }
-
-  useEffect(() => {
-    const name = isExampleRoute
-      ? exampleNameFromSlug(params?.slug ?? "")
-      : location === "/"
-      ? DEFAULT_EXAMPLE_NAME
-      : null
-
-    if (!name) {
-      navigate(examplePath(DEFAULT_EXAMPLE_NAME))
-      return
-    }
-
-    if (location === "/") {
-      navigate(examplePath(name))
-      return
-    }
-
-    if (
-      selectedExample.value === name &&
-      inputCode.value === exampleSource(name)
-    ) return
-
-    showExample(name)
-  }, [isExampleRoute, location, navigate, params?.slug])
 
   const handleScroll = (source: "input" | "output") => {
     if (isScrollingRef.current) return
@@ -110,9 +91,6 @@ export function App() {
 
   const loadExample = (name: ExampleName) => {
     showExample(name)
-    const path = examplePath(name)
-    if (location === path) return
-    navigate(path)
   }
 
   const copyOutput = async () => {
@@ -192,7 +170,9 @@ export function App() {
         <Panel
           title={`${
             outputMode.value === "rust" ? "Rust Output" : "Syntax Tree"
-          } (${stats.value.outputLines} lines)`}
+          } (${stats.value.outputLines} lines, ${
+            formatMs(stats.value.outputMs)
+          })`}
           class="w-full md:w-1/2"
           action={
             <button
@@ -220,6 +200,10 @@ export function App() {
 function countLines(value: string): number {
   if (!value) return 0
   return value.replace(/\n$/, "").split("\n").length
+}
+
+function formatMs(value: number): string {
+  return `${value.toFixed(value < 10 ? 2 : 1)} ms`
 }
 
 function stringifyError(error: unknown): string {
