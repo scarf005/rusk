@@ -5,7 +5,6 @@ pub struct User
 
 impl User
     pub fn new(id: u64, name: String) -> Self = Self{ id, name }
-
     pub fn display_name(&self) -> &str = &self.name
 
 pub fn main() =
