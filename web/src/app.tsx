@@ -1,5 +1,6 @@
-import { useRef } from "preact/hooks"
+import { useEffect, useRef } from "preact/hooks"
 import { computed, signal, useSignal } from "@preact/signals"
+import { useLocation, useRoute } from "wouter-preact"
 import { transpile_syntax_tree_json, transpile_to_rust } from "./wasm/rusk.js"
 import { InputEditor, OutputDisplay } from "./Editor.tsx"
 import { Header, Layout, Main, Panel } from "./Layout.tsx"
@@ -7,6 +8,8 @@ import {
   DEFAULT_EXAMPLE_NAME,
   EXAMPLE_NAMES,
   ExampleName,
+  exampleNameFromSlug,
+  examplePath,
   exampleSource,
 } from "./constants.ts"
 
@@ -56,6 +59,8 @@ const stats = computed(() => ({
 }))
 
 export function App() {
+  const [location, navigate] = useLocation()
+  const [isExampleRoute, params] = useRoute("/examples/:slug")
   const copied = useSignal(false)
   const inputRef = useRef<HTMLElement>(null)
   const outputRef = useRef<HTMLElement>(null)
@@ -67,6 +72,31 @@ export function App() {
     inputRef.current?.scrollTo({ top: 0 })
     outputRef.current?.scrollTo({ top: 0 })
   }
+
+  useEffect(() => {
+    const name = isExampleRoute
+      ? exampleNameFromSlug(params?.slug ?? "")
+      : location === "/"
+      ? DEFAULT_EXAMPLE_NAME
+      : null
+
+    if (!name) {
+      navigate(examplePath(DEFAULT_EXAMPLE_NAME))
+      return
+    }
+
+    if (location === "/") {
+      navigate(examplePath(name))
+      return
+    }
+
+    if (
+      selectedExample.value === name &&
+      inputCode.value === exampleSource(name)
+    ) return
+
+    showExample(name)
+  }, [isExampleRoute, location, navigate, params?.slug])
 
   const handleScroll = (source: "input" | "output") => {
     if (isScrollingRef.current) return
@@ -91,6 +121,9 @@ export function App() {
 
   const loadExample = (name: ExampleName) => {
     showExample(name)
+    const path = examplePath(name)
+    if (location === path) return
+    navigate(path)
   }
 
   const copyOutput = async () => {

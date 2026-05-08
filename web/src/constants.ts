@@ -89,5 +89,15 @@ const EXAMPLES_BY_NAME = Object.fromEntries(
   EXAMPLES.map((example) => [example.name, example]),
 ) as Record<ExampleName, (typeof EXAMPLES)[number]>
 
+const EXAMPLE_NAMES_BY_SLUG = Object.fromEntries(
+  EXAMPLES.map((example) => [example.slug, example.name]),
+) as Record<string, ExampleName>
+
 export const exampleSource = (name: ExampleName) =>
   EXAMPLES_BY_NAME[name].source
+
+export const examplePath = (name: ExampleName) =>
+  `/examples/${EXAMPLES_BY_NAME[name].slug}`
+
+export const exampleNameFromSlug = (slug: string) =>
+  EXAMPLE_NAMES_BY_SLUG[slug] ?? null
