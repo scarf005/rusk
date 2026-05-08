@@ -4,6 +4,11 @@ description = "Rusk language support."
 version = "0.1.0"
 schema_version = 1
 authors = ["scarf005"]
+languages = ["languages/rusk"]
+
+[lib]
+kind = "Rust"
+version = "0.7.0"
 
 [language_servers.rusk-lsp]
 name = "Rusk LSP"
