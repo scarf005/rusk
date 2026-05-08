@@ -193,6 +193,7 @@ const sendJson = (response: ServerResponse, status: number, body: unknown) => {
 // https://vite.dev/config/
 export default defineConfig({
   appType: "spa",
+  resolve: { dedupe: ["preact", "preact/hooks", "preact/jsx-runtime"] },
   plugins: [
     localRunApi(),
     exampleRouteFallback(),
