@@ -3,3 +3,7 @@ pub fn clone_twice[T](value: T) -> (T, T) where T: Clone =
 
 pub fn debug_len[T](values: &[T]) -> usize where T: std.fmt.Debug =
     values.len()
+
+pub fn main() =
+    let _ = clone_twice("rusk".to_string())
+    let _ = debug_len(&[1, 2, 3])

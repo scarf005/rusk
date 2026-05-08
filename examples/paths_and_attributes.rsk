@@ -7,3 +7,6 @@ pub fn counts() -> HashMap[String, i32] =
     map.insert("one".to_string(), 1)
     map.insert("two".to_string(), 2)
     map
+
+pub fn main() =
+    let _ = counts()

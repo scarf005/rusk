@@ -6,3 +6,6 @@ pub fn pick(xs: &[i32], index: usize) -> i32 =
     let literal = values[1]
     let matrix = nested[1][0]
     direct + literal + matrix + repeated[2]
+
+pub fn main() =
+    let _ = pick(&[1, 2, 3], 1)

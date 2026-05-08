@@ -7,3 +7,7 @@ pub fn first_positive(values: &[i32]) -> Option[i32] =
 pub fn parse_positive(raw: &str) -> Result[Option[i32], std.num.ParseIntError] =
     let value = raw.parse[i32]()?
     if value > 0 then Ok(Some(value)) else Ok(None)
+
+pub fn main() =
+    let _ = first_positive(&[-1, 2])
+    let _ = parse_positive("3")

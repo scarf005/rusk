@@ -5,3 +5,6 @@ pub mod outer
     pub fn doubled() -> i32 = inner::value() * 2
 
 pub fn read() -> i32 = outer::doubled()
+
+pub fn main() =
+    let _ = read()

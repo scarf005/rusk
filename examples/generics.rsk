@@ -8,3 +8,6 @@ impl[T] Boxed[T]
 pub fn parse_boxed(raw: &str) -> Result[Boxed[i32], std.num.ParseIntError] =
     let value = raw.parse[i32]()?
     Ok(Boxed.new(value))
+
+pub fn main() =
+    let _ = parse_boxed("42")

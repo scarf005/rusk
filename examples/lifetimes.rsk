@@ -7,3 +7,8 @@ impl['a] Borrowed['a]
 
 pub fn choose['a](left: &'a str, right: &'a str, use_left: bool) -> &'a str =
     if use_left then left else right
+
+pub fn main() =
+    let borrowed = Borrowed.new("Ada")
+    let _ = borrowed.name()
+    let _ = choose("left", "right", true)

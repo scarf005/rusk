@@ -12,3 +12,7 @@ pub fn log_values(values: &[i32]) =
 
 pub fn assert_non_empty(values: &[i32]) =
     assert!(!values.is_empty())
+
+pub fn main() =
+    let _ = make_message("Ada")
+    assert_non_empty(&[1])

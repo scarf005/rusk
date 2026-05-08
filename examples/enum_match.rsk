@@ -9,3 +9,6 @@ pub fn describe(token: Token) -> &'static str =
         Token.Ident(_) => "ident"
         Token.Number(_) => "number"
         Token.Eof => "eof"
+
+pub fn main() =
+    let _ = describe(Token.Eof)
