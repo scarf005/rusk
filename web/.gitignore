@@ -12,6 +12,9 @@ dist
 dist-ssr
 .vite
 *.local
+/src/wasm/rusk.d.ts
+/src/wasm/rusk.internal.js
+/src/wasm/rusk.js
 
 # Editor directories and files
 .vscode/*
