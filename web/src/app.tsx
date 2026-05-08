@@ -189,8 +189,6 @@ export function App() {
     }
   }
 
-  const hasRunPanel = !!runOutput.value || runState.value === "running"
-
   return (
     <Layout>
       <Header>
@@ -275,10 +273,8 @@ export function App() {
             } (${stats.value.outputLines} lines, ${
               formatMs(stats.value.outputMs)
             })`}
-            class={`w-full ${hasRunPanel ? "h-1/2" : "h-full"}`}
-            border={hasRunPanel
-              ? "border-b-2 md:border-b-2 border-black"
-              : "border-b-0 border-black"}
+            class="w-full h-1/2"
+            border="border-b-2 border-black"
             action={
               <div class="flex gap-2">
                 {isDevServer && (
@@ -311,17 +307,15 @@ export function App() {
             />
           </Panel>
 
-          {hasRunPanel && (
-            <Panel
-              title={`Run Output (${countLines(runOutput.value)} lines${
-                runResult.value ? `, ${formatMs(runResult.value.totalMs)}` : ""
-              })`}
-              class="w-full h-1/2"
-              border="border-b-0 border-black"
-            >
-              <OutputDisplay value={runOutput.value} language="text" />
-            </Panel>
-          )}
+          <Panel
+            title={`Run Output (${countLines(runOutput.value)} lines${
+              runResult.value ? `, ${formatMs(runResult.value.totalMs)}` : ""
+            })`}
+            class="w-full h-1/2"
+            border="border-b-0 border-black"
+          >
+            <OutputDisplay value={runOutput.value} language="text" />
+          </Panel>
         </div>
       </Main>
     </Layout>
