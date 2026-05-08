@@ -23,14 +23,17 @@ export const Panel = ({
   action,
   children,
   class: className = "",
+  border =
+    "border-b-2 md:border-b-0 md:border-r-2 border-black last:border-r-0 last:border-b-0",
 }: {
   title: string
   action?: ComponentChildren
   children: ComponentChildren
   class?: string
+  border?: string
 }) => (
   <section
-    class={`flex flex-col h-1/2 md:h-full border-b-2 md:border-b-0 md:border-r-2 border-black last:border-r-0 last:border-b-0 ${className}`}
+    class={`flex flex-col ${border} ${className}`}
   >
     <div class="flex-none py-2 px-4 border-b-2 border-black bg-white uppercase font-bold text-sm tracking-wider flex items-center justify-between gap-3">
       <span>{title}</span>

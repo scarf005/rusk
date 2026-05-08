@@ -249,7 +249,7 @@ export function App() {
       <Main>
         <Panel
           title={`Rusk Input (${stats.value.sourceLines} lines)`}
-          class={`w-full ${hasRunPanel ? "md:w-1/3" : "md:w-1/2"}`}
+          class="w-full md:w-1/2 h-1/2 md:h-full"
           action={
             <button
               type="button"
@@ -268,55 +268,61 @@ export function App() {
           />
         </Panel>
 
-        <Panel
-          title={`${
-            outputMode.value === "rust" ? "Rust Output" : "Syntax Tree"
-          } (${stats.value.outputLines} lines, ${
-            formatMs(stats.value.outputMs)
-          })`}
-          class={`w-full ${hasRunPanel ? "md:w-1/3" : "md:w-1/2"}`}
-          action={
-            <div class="flex gap-2">
-              {isDevServer && (
+        <div class="w-full md:w-1/2 h-1/2 md:h-full flex flex-col min-h-0">
+          <Panel
+            title={`${
+              outputMode.value === "rust" ? "Rust Output" : "Syntax Tree"
+            } (${stats.value.outputLines} lines, ${
+              formatMs(stats.value.outputMs)
+            })`}
+            class={`w-full ${hasRunPanel ? "h-1/2" : "h-full"}`}
+            border={hasRunPanel
+              ? "border-b-2 md:border-b-2 border-black"
+              : "border-b-0 border-black"}
+            action={
+              <div class="flex gap-2">
+                {isDevServer && (
+                  <button
+                    type="button"
+                    onClick={runRust}
+                    disabled={runState.value === "running" ||
+                      !!transpiled.value.error}
+                    class="text-xs uppercase font-bold px-3 py-1 border-2 border-black bg-white hover:bg-black hover:text-white disabled:opacity-50 disabled:hover:bg-white disabled:hover:text-black"
+                  >
+                    {runState.value === "running" ? "Running" : "▶ Run"}
+                  </button>
+                )}
                 <button
                   type="button"
-                  onClick={runRust}
-                  disabled={runState.value === "running" ||
-                    !!transpiled.value.error}
-                  class="text-xs uppercase font-bold px-3 py-1 border-2 border-black bg-white hover:bg-black hover:text-white disabled:opacity-50 disabled:hover:bg-white disabled:hover:text-black"
+                  onClick={copyOutput}
+                  class="text-xs uppercase font-bold px-3 py-1 border-2 border-black bg-white hover:bg-black hover:text-white"
                 >
-                  {runState.value === "running" ? "Running" : "▶ Run"}
+                  {copied.value ? "Copied" : "Copy"}
                 </button>
-              )}
-              <button
-                type="button"
-                onClick={copyOutput}
-                class="text-xs uppercase font-bold px-3 py-1 border-2 border-black bg-white hover:bg-black hover:text-white"
-              >
-                {copied.value ? "Copied" : "Copy"}
-              </button>
-            </div>
-          }
-        >
-          <OutputDisplay
-            outputRef={outputRef}
-            value={outputText.value}
-            language={outputMode.value === "rust" ? "rust" : "json"}
-            error={transpiled.value.error}
-            onScroll={() => handleScroll("output")}
-          />
-        </Panel>
-
-        {hasRunPanel && (
-          <Panel
-            title={`Run Output (${countLines(runOutput.value)} lines${
-              runResult.value ? `, ${formatMs(runResult.value.totalMs)}` : ""
-            })`}
-            class="w-full md:w-1/3"
+              </div>
+            }
           >
-            <OutputDisplay value={runOutput.value} language="text" />
+            <OutputDisplay
+              outputRef={outputRef}
+              value={outputText.value}
+              language={outputMode.value === "rust" ? "rust" : "json"}
+              error={transpiled.value.error}
+              onScroll={() => handleScroll("output")}
+            />
           </Panel>
-        )}
+
+          {hasRunPanel && (
+            <Panel
+              title={`Run Output (${countLines(runOutput.value)} lines${
+                runResult.value ? `, ${formatMs(runResult.value.totalMs)}` : ""
+              })`}
+              class="w-full h-1/2"
+              border="border-b-0 border-black"
+            >
+              <OutputDisplay value={runOutput.value} language="text" />
+            </Panel>
+          )}
+        </div>
       </Main>
     </Layout>
   )
