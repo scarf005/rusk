@@ -15,11 +15,15 @@ interface CommandResult {
   stdout: string
   stderr: string
   timedOut: boolean
+  elapsedMs: number
 }
 
 interface RunResponse extends CommandResult {
   ok: boolean
   stage: "compile" | "run"
+  compileMs: number
+  runMs: number
+  totalMs: number
 }
 
 const RUN_TIMEOUT_MS = 5_000
@@ -93,16 +97,33 @@ const compileAndRunRust = async (rust: string): Promise<RunResponse> => {
     )
     await writeFile(sourcePath, rust)
 
+    const started = performance.now()
     const compile = await runCommand("rustc", [
       "--edition=2024",
       sourcePath,
       "-o",
       binaryPath,
     ], dir)
-    if (compile.status !== 0) return { ...compile, ok: false, stage: "compile" }
+    if (compile.status !== 0) {
+      return {
+        ...compile,
+        ok: false,
+        stage: "compile",
+        compileMs: compile.elapsedMs,
+        runMs: 0,
+        totalMs: performance.now() - started,
+      }
+    }
 
     const run = await runCommand(binaryPath, [], dir)
-    return { ...run, ok: run.status === 0 && !run.timedOut, stage: "run" }
+    return {
+      ...run,
+      ok: run.status === 0 && !run.timedOut,
+      stage: "run",
+      compileMs: compile.elapsedMs,
+      runMs: run.elapsedMs,
+      totalMs: performance.now() - started,
+    }
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
@@ -114,6 +135,7 @@ const runCommand = (
   cwd: string,
 ): Promise<CommandResult> =>
   new Promise((resolve) => {
+    const started = performance.now()
     const child = spawn(command, args, { cwd })
     let stdout = ""
     let stderr = ""
@@ -127,11 +149,23 @@ const runCommand = (
     child.stderr.on("data", (chunk) => stderr += chunk)
     child.on("close", (status) => {
       clearTimeout(timeout)
-      resolve({ status, stdout, stderr, timedOut })
+      resolve({
+        status,
+        stdout,
+        stderr,
+        timedOut,
+        elapsedMs: performance.now() - started,
+      })
     })
     child.on("error", (error) => {
       clearTimeout(timeout)
-      resolve({ status: null, stdout, stderr: String(error), timedOut })
+      resolve({
+        status: null,
+        stdout,
+        stderr: String(error),
+        timedOut,
+        elapsedMs: performance.now() - started,
+      })
     })
   })
 

@@ -17,7 +17,7 @@ import {
   exampleSource,
 } from "./constants.ts"
 
-type OutputMode = "rust" | "syntax-tree" | "run"
+type OutputMode = "rust" | "syntax-tree"
 type RunState = "idle" | "running"
 
 type RunResponse = {
@@ -27,6 +27,9 @@ type RunResponse = {
   stdout: string
   stderr: string
   timedOut: boolean
+  compileMs: number
+  runMs: number
+  totalMs: number
 }
 
 const isDevServer =
@@ -36,6 +39,7 @@ const selectedExample = signal<ExampleName>(DEFAULT_EXAMPLE_NAME)
 const inputCode = signal<string>(exampleSource(DEFAULT_EXAMPLE_NAME))
 const outputMode = signal<OutputMode>("rust")
 const runOutput = signal("")
+const runResult = signal<RunResponse | null>(null)
 const runState = signal<RunState>("idle")
 
 const transpiled = computed(() => {
@@ -64,7 +68,6 @@ const outputText = computed(() => {
   if (transpiled.value.error) {
     return "// Fix the Rusk source to see generated output."
   }
-  if (outputMode.value === "run") return runOutput.value
   return outputMode.value === "rust"
     ? transpiled.value.rust
     : transpiled.value.syntaxTree
@@ -75,9 +78,7 @@ const stats = computed(() => ({
   outputLines: countLines(outputText.value),
   outputMs: outputMode.value === "rust"
     ? transpiled.value.rustMs
-    : outputMode.value === "syntax-tree"
-    ? transpiled.value.syntaxTreeMs
-    : 0,
+    : transpiled.value.syntaxTreeMs,
 }))
 
 export function App() {
@@ -87,9 +88,19 @@ export function App() {
   const outputRef = useRef<HTMLElement>(null)
   const isScrollingRef = useRef(false)
 
+  const clearRun = () => {
+    runOutput.value = ""
+    runResult.value = null
+  }
+
+  const setInputCode = (value: string) => {
+    inputCode.value = value
+    clearRun()
+  }
+
   const showExample = (name: ExampleName) => {
     selectedExample.value = name
-    inputCode.value = exampleSource(name)
+    setInputCode(exampleSource(name))
     inputRef.current?.scrollTo({ top: 0 })
     outputRef.current?.scrollTo({ top: 0 })
   }
@@ -150,13 +161,13 @@ export function App() {
     setTimeout(() => copied.value = false, 900)
   }
 
-  const formatInput = () => inputCode.value = format_rusk(inputCode.value, 100)
+  const formatInput = () => setInputCode(format_rusk(inputCode.value, 100))
 
   const runRust = async () => {
     if (transpiled.value.error || runState.value === "running") return
 
     runState.value = "running"
-    outputMode.value = "run"
+    runResult.value = null
     runOutput.value = "Running..."
     try {
       const response = await fetch("/api/run", {
@@ -165,15 +176,20 @@ export function App() {
         body: JSON.stringify({ rust: transpiled.value.rust }),
       })
       const result = await response.json() as RunResponse | { error: string }
-      runOutput.value = "error" in result
-        ? result.error
-        : formatRunOutput(result)
+      if ("error" in result) {
+        runOutput.value = result.error
+      } else {
+        runResult.value = result
+        runOutput.value = formatRunOutput(result)
+      }
     } catch (error) {
       runOutput.value = stringifyError(error)
     } finally {
       runState.value = "idle"
     }
   }
+
+  const hasRunPanel = !!runOutput.value || runState.value === "running"
 
   return (
     <Layout>
@@ -185,26 +201,18 @@ export function App() {
         </div>
 
         <div class="flex-1 flex overflow-x-auto w-full border-b-2 lg:border-b-0 lg:border-r-2 border-black no-scrollbar bg-white">
-          {([
-            "rust",
-            "syntax-tree",
-            ...(runOutput.value ? ["run"] : []),
-          ] as OutputMode[]).map((mode) => (
+          {(["rust", "syntax-tree"] as OutputMode[]).map((mode) => (
             <button
               type="button"
               key={mode}
-              onClick={() => outputMode.value = mode as OutputMode}
+              onClick={() => outputMode.value = mode}
               class={`flex-none px-4 md:px-6 py-3 font-bold text-xs md:text-sm uppercase transition-none border-r-2 border-black focus:outline-none whitespace-nowrap ${
                 outputMode.value === mode
                   ? "bg-black text-white"
                   : "bg-white text-black hover:bg-gray-200"
               }`}
             >
-              {mode === "rust"
-                ? "Rust Output"
-                : mode === "syntax-tree"
-                ? "Syntax Tree"
-                : "Run Output"}
+              {mode === "rust" ? "Rust Output" : "Syntax Tree"}
             </button>
           ))}
         </div>
@@ -241,7 +249,7 @@ export function App() {
       <Main>
         <Panel
           title={`Rusk Input (${stats.value.sourceLines} lines)`}
-          class="w-full md:w-1/2"
+          class={`w-full ${hasRunPanel ? "md:w-1/3" : "md:w-1/2"}`}
           action={
             <button
               type="button"
@@ -255,24 +263,18 @@ export function App() {
           <InputEditor
             editorRef={inputRef}
             value={inputCode.value}
-            onChange={(value) => inputCode.value = value}
+            onChange={setInputCode}
             onScroll={() => handleScroll("input")}
           />
         </Panel>
 
         <Panel
           title={`${
-            outputMode.value === "rust"
-              ? "Rust Output"
-              : outputMode.value === "syntax-tree"
-              ? "Syntax Tree"
-              : "Run Output"
-          } (${stats.value.outputLines} lines${
-            outputMode.value === "run"
-              ? ""
-              : `, ${formatMs(stats.value.outputMs)}`
+            outputMode.value === "rust" ? "Rust Output" : "Syntax Tree"
+          } (${stats.value.outputLines} lines, ${
+            formatMs(stats.value.outputMs)
           })`}
-          class="w-full md:w-1/2"
+          class={`w-full ${hasRunPanel ? "md:w-1/3" : "md:w-1/2"}`}
           action={
             <div class="flex gap-2">
               {isDevServer && (
@@ -299,15 +301,22 @@ export function App() {
           <OutputDisplay
             outputRef={outputRef}
             value={outputText.value}
-            language={outputMode.value === "rust"
-              ? "rust"
-              : outputMode.value === "syntax-tree"
-              ? "json"
-              : "text"}
+            language={outputMode.value === "rust" ? "rust" : "json"}
             error={transpiled.value.error}
             onScroll={() => handleScroll("output")}
           />
         </Panel>
+
+        {hasRunPanel && (
+          <Panel
+            title={`Run Output (${countLines(runOutput.value)} lines${
+              runResult.value ? `, ${formatMs(runResult.value.totalMs)}` : ""
+            })`}
+            class="w-full md:w-1/3"
+          >
+            <OutputDisplay value={runOutput.value} language="text" />
+          </Panel>
+        )}
       </Main>
     </Layout>
   )
@@ -327,7 +336,12 @@ function formatRunOutput(result: RunResponse): string {
   const status = result.timedOut
     ? `${result.stage} timed out`
     : `${result.stage} exit ${result.status ?? "unknown"}`
-  return output ? `${output}\n\n[${status}]` : `[${status}]`
+  const timing = `compile ${formatMs(result.compileMs)}, run ${
+    formatMs(result.runMs)
+  }, total ${formatMs(result.totalMs)}`
+  return output
+    ? `${output}\n\n[${status}, ${timing}]`
+    : `[${status}, ${timing}]`
 }
 
 function stringifyError(error: unknown): string {
