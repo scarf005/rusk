@@ -1,0 +1,13 @@
+(attribute) @attribute
+(line_comment) @comment
+(raw_string) @string
+(string) @string
+(char) @string
+(number) @number
+(keyword) @keyword
+(builtin_type) @type.builtin
+(type_identifier) @type
+(macro_identifier) @function
+(identifier) @variable
+(operator) @operator
+(punctuation) @punctuation.delimiter

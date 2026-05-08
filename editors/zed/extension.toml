@@ -1,0 +1,15 @@
+id = "rusk"
+name = "Rusk"
+description = "Rusk language support."
+version = "0.1.0"
+schema_version = 1
+authors = ["scarf005"]
+
+[language_servers.rusk-lsp]
+name = "Rusk LSP"
+languages = ["Rusk"]
+
+[grammars.rusk]
+repository = "file:///run/media/home/scarf/repo/etc/rusk"
+rev = "main"
+path = "editors/zed/tree-sitter-rusk"

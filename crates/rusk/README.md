@@ -8,6 +8,7 @@
 rusk input.rsk -o output.rs
 rusk transpile input.rsk --source-map output.map.json
 cat input.rsk | rusk
+rusk-lsp
 ```
 
 ## Supported MVP syntax
@@ -62,6 +63,14 @@ pub fn main() {
     let user = User::new(1, "Ada".to_string());
     println!("{}", user.display_name());
 }
+```
+
+## Language Server
+
+`rusk-lsp` is a standard stdio Language Server Protocol server. It currently reports transpile diagnostics and document symbols for `.rsk` files.
+
+```sh
+cargo install --path crates/rusk --bin rusk-lsp
 ```
 
 ## Current limits
