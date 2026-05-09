@@ -580,7 +580,7 @@ fn emit_node(node: &Node, context: Context, is_last: bool, emitter: &mut Emitter
 fn emit_node_body(node: &Node, context: Context, is_last: bool, emitter: &mut Emitter) {
     let text = node.text.trim();
     if text.starts_with("//") {
-        emitter.push(node, text.to_string());
+        emitter.push(node, format!("{}{}", spaces(node.indent), text));
         return;
     }
     if let Some(attribute) = lower_attribute(text) {
@@ -1746,6 +1746,24 @@ pub fn id(value: i32) -> i32 =
 }
 pub fn id(value: i32) -> i32 {
     value
+}
+"#
+        );
+    }
+
+    #[test]
+    fn preserves_comment_indentation() {
+        let source = r#"
+fn demo() =
+    // do explicitly discards the value.
+    do println!("hi")
+"#;
+
+        assert_eq!(
+            rust(source),
+            r#"fn demo() {
+    // do explicitly discards the value.
+    println!("hi");
 }
 "#
         );
