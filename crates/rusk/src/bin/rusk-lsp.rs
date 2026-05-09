@@ -885,9 +885,9 @@ fn line_range(text: &str, line: usize) -> Range {
 }
 
 const KEYWORDS: &[&str] = &[
-    "as", "async", "await", "break", "const", "continue", "do", "else", "enum", "false", "fn",
-    "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "return",
-    "self", "Self", "static", "struct", "trait", "true", "type", "unsafe", "use", "where", "while",
+    "as", "async", "await", "break", "const", "continue", "else", "enum", "false", "fn", "for",
+    "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "return", "self",
+    "Self", "static", "struct", "trait", "true", "type", "unsafe", "use", "where", "while",
 ];
 
 const BUILTIN_TYPES: &[&str] = &[

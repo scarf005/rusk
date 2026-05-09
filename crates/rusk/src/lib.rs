@@ -270,7 +270,8 @@ fn convert_rust_statement(text: &str, parent: Option<RustBlockKind>) -> Converte
     }
 
     let mut text = text.to_string();
-    if text.ends_with(';') {
+    let had_semicolon = text.ends_with(';');
+    if had_semicolon {
         text.pop();
         text = text.trim_end().to_string();
     } else if matches!(
@@ -282,8 +283,18 @@ fn convert_rust_statement(text: &str, parent: Option<RustBlockKind>) -> Converte
         text = text.trim_end().to_string();
     }
 
+    let text = lower_rust_syntax(&text);
+    let needs_explicit_semicolon = had_semicolon
+        && !is_let(&text)
+        && !is_assignment(&text)
+        && !is_jump_statement(&text)
+        && !is_use_or_extern_crate(&text);
     ConvertedRustStatement {
-        text: lower_rust_syntax(&text),
+        text: format!(
+            "{}{}",
+            text,
+            if needs_explicit_semicolon { ";" } else { "" }
+        ),
         opens: None,
     }
 }
@@ -637,9 +648,8 @@ fn classify_node(node: &Node, context: Context) -> String {
         "struct_literal".to_string()
     } else if is_let(text) {
         "let".to_string()
-    } else if let Some(expr) = text.strip_prefix("do ") {
-        format!("do_{}", classify_expression(expr.trim()))
     } else {
+        let (text, _) = strip_explicit_semicolon(text);
         classify_expression(text)
     }
 }
@@ -658,6 +668,13 @@ fn classify_expression(text: &str) -> String {
     }
 }
 
+fn strip_explicit_semicolon(text: &str) -> (&str, bool) {
+    let text = text.trim_end();
+    text.strip_suffix(';')
+        .map(|stripped| (stripped.trim_end(), true))
+        .unwrap_or((text, false))
+}
+
 fn emit_general(node: &Node, context: Context, is_last: bool, emitter: &mut Emitter) {
     let text = node.text.trim();
     if is_struct_item(text) {
@@ -672,18 +689,43 @@ fn emit_general(node: &Node, context: Context, is_last: bool, emitter: &mut Emit
         emit_function(node, emitter);
     } else if is_impl_or_mod_item(text) {
         emit_braced_item(node, Context::Block, emitter, lower_signature(text));
-    } else if is_match(text) {
-        emit_braced_item(node, Context::Match, emitter, lower_expr(text));
-    } else if is_control(text) {
-        emit_braced_item(node, Context::Block, emitter, lower_expr(text));
-    } else if looks_like_struct_literal(node) {
-        emit_struct_literal_expr(node, emitter, is_last);
     } else {
-        emit_statement(node, context, is_last, emitter);
+        let (text, has_explicit_semicolon) = strip_explicit_semicolon(text);
+        if is_match(text) {
+            emit_braced_item_statement(
+                node,
+                Context::Match,
+                emitter,
+                lower_expr(text),
+                has_explicit_semicolon,
+            );
+        } else if is_control(text) {
+            emit_braced_item_statement(
+                node,
+                Context::Block,
+                emitter,
+                lower_expr(text),
+                has_explicit_semicolon,
+            );
+        } else if looks_like_struct_literal(node) {
+            emit_struct_literal_expr(node, text, emitter, is_last && !has_explicit_semicolon);
+        } else {
+            emit_statement(node, context, is_last, emitter);
+        }
     }
 }
 
 fn emit_braced_item(node: &Node, child_context: Context, emitter: &mut Emitter, header: String) {
+    emit_braced_item_statement(node, child_context, emitter, header, false);
+}
+
+fn emit_braced_item_statement(
+    node: &Node,
+    child_context: Context,
+    emitter: &mut Emitter,
+    header: String,
+    has_explicit_semicolon: bool,
+) {
     let indent = spaces(node.indent);
     let header = strip_open_brace(&header);
     if node.children.is_empty() && matches!(child_context, Context::Struct | Context::Enum) {
@@ -692,7 +734,11 @@ fn emit_braced_item(node: &Node, child_context: Context, emitter: &mut Emitter, 
     }
     emitter.push(node, format!("{}{} {{", indent, header));
     emit_nodes(&node.children, child_context, emitter);
-    emitter.push_generated(format!("{}}}", indent));
+    emitter.push_generated(format!(
+        "{}}}{}",
+        indent,
+        if has_explicit_semicolon { ";" } else { "" }
+    ));
 }
 
 fn emit_function(node: &Node, emitter: &mut Emitter) {
@@ -709,23 +755,27 @@ fn emit_function(node: &Node, emitter: &mut Emitter) {
     let returns_value = function_returns_value(signature);
     emitter.push(node, format!("{}{} {{", indent, lower_signature(signature)));
     let body = body.trim();
+    let (body, has_explicit_semicolon) = strip_explicit_semicolon(body);
     if body.is_empty() {
         emit_function_body(&node.children, returns_value, emitter);
     } else if !node.children.is_empty() && are_continuations(&node.children) {
         emitter.push_generated(format!("{}{}", spaces(node.indent + 4), lower_expr(body)));
-        emit_continuations(&node.children, 4, returns_value, emitter);
-    } else if let Some(expr) = body.strip_prefix("do ") {
-        emitter.push_generated(format!(
-            "{}{};",
-            spaces(node.indent + 4),
-            lower_expr(expr.trim())
-        ));
+        emit_continuations(
+            &node.children,
+            4,
+            returns_value && !has_explicit_semicolon,
+            emitter,
+        );
     } else {
         emitter.push_generated(format!(
             "{}{}{}",
             spaces(node.indent + 4),
             lower_expr(body),
-            if returns_value { "" } else { ";" }
+            if returns_value && !has_explicit_semicolon {
+                ""
+            } else {
+                ";"
+            }
         ));
     }
     emitter.push_generated(format!("{}}}", indent));
@@ -740,31 +790,44 @@ fn emit_function_body(nodes: &[Node], returns_value: bool, emitter: &mut Emitter
 
 fn emit_statement(node: &Node, _context: Context, is_last: bool, emitter: &mut Emitter) {
     let indent = spaces(node.indent);
-    let text = node.text.trim();
+    let (text, has_explicit_semicolon) = strip_explicit_semicolon(node.text.trim());
     if !node.children.is_empty() && are_continuations(&node.children) {
         emitter.push(node, format!("{}{}", indent, lower_expr(text)));
-        emit_continuations(&node.children, 0, is_last, emitter);
+        emit_continuations(
+            &node.children,
+            0,
+            is_last && !has_explicit_semicolon,
+            emitter,
+        );
     } else if !node.children.is_empty() && is_multiline_closure_head(text) {
-        emit_multiline_closure_expr(node, text, is_last, emitter);
+        emit_multiline_closure_expr(node, text, is_last && !has_explicit_semicolon, emitter);
     } else if !node.children.is_empty()
         && let Some((lhs, rhs)) = split_once_top_level(text, '=')
         && is_multiline_closure_head(rhs.trim())
     {
         emit_multiline_closure_assignment(node, lhs.trim(), rhs.trim(), emitter);
     } else if !node.children.is_empty() && is_raw_braced_expr_head(text) {
-        emit_raw_braced_expr(node, text, is_last, emitter);
-    } else if let Some(expr) = text.strip_prefix("do ") {
-        emitter.push(node, format!("{}{};", indent, lower_expr(expr.trim())));
+        emit_raw_braced_expr(node, text, is_last && !has_explicit_semicolon, emitter);
     } else if is_use_or_extern_crate(text) {
         emitter.push(node, format!("{}{};", indent, lower_signature(text)));
     } else if is_let(text) || is_assignment(text) || is_jump_statement(text) {
         emitter.push(node, format!("{}{};", indent, lower_expr(text)));
     } else if !node.children.is_empty() && is_control(text) {
-        emit_braced_item(node, Context::Block, emitter, lower_expr(text));
+        emit_braced_item_statement(
+            node,
+            Context::Block,
+            emitter,
+            lower_expr(text),
+            has_explicit_semicolon,
+        );
     } else if !node.children.is_empty() && looks_like_struct_literal(node) {
-        emit_struct_literal_expr(node, emitter, is_last);
+        emit_struct_literal_expr(node, text, emitter, is_last && !has_explicit_semicolon);
     } else {
-        let suffix = if is_last { "" } else { ";" };
+        let suffix = if is_last && !has_explicit_semicolon {
+            ""
+        } else {
+            ";"
+        };
         emitter.push(node, format!("{}{}{}", indent, lower_expr(text), suffix));
     }
 }
@@ -893,17 +956,14 @@ fn emit_match_arm(node: &Node, emitter: &mut Emitter) {
     if let Some((pattern, expr)) = split_arrow(node.text.trim()) {
         let pattern = lower_expr(pattern.trim());
         let expr = expr.trim();
+        let (expr, has_explicit_semicolon) = strip_explicit_semicolon(expr);
         if expr.is_empty() {
             emitter.push(node, format!("{}{} => {{", indent, pattern));
             emit_nodes(&node.children, Context::Block, emitter);
             emitter.push_generated(format!("{}}},", indent));
-        } else if let Some(expr) = expr.strip_prefix("do ") {
+        } else if has_explicit_semicolon {
             emitter.push(node, format!("{}{} => {{", indent, pattern));
-            emitter.push_generated(format!(
-                "{}{};",
-                spaces(node.indent + 4),
-                lower_expr(expr.trim())
-            ));
+            emitter.push_generated(format!("{}{};", spaces(node.indent + 4), lower_expr(expr)));
             emitter.push_generated(format!("{}}},", indent));
         } else {
             emitter.push(
@@ -912,7 +972,8 @@ fn emit_match_arm(node: &Node, emitter: &mut Emitter) {
             );
         }
     } else if node.children.is_empty() {
-        emitter.push(node, format!("{}{},", indent, lower_expr(node.text.trim())));
+        let (text, _) = strip_explicit_semicolon(node.text.trim());
+        emitter.push(node, format!("{}{},", indent, lower_expr(text)));
     } else {
         emitter.push(
             node,
@@ -943,12 +1004,9 @@ fn emit_macro_arm(node: &Node, emitter: &mut Emitter) {
     }
 }
 
-fn emit_struct_literal_expr(node: &Node, emitter: &mut Emitter, is_last: bool) {
+fn emit_struct_literal_expr(node: &Node, text: &str, emitter: &mut Emitter, is_last: bool) {
     let indent = spaces(node.indent);
-    emitter.push(
-        node,
-        format!("{}{} {{", indent, lower_expr(node.text.trim())),
-    );
+    emitter.push(node, format!("{}{} {{", indent, lower_expr(text)));
     emit_nodes(&node.children, Context::StructLiteral, emitter);
     emitter.push_generated(format!("{}}}{}", indent, if is_last { "" } else { ";" }));
 }
@@ -1595,12 +1653,12 @@ impl User {
     }
 
     #[test]
-    fn lowers_do_and_match_arms() {
+    fn lowers_explicit_semicolons_and_match_arms() {
         let source = r#"
 fn parse(line: &str) -> Result[i32, String] =
     match line.parse[i32]()
         Ok(value)
-            do println!("{}", value)
+            println!("{}", value);
             Ok(value)
         Err(error) => Err(error.to_string())
 "#;
@@ -1621,7 +1679,7 @@ fn parse(line: &str) -> Result[i32, String] =
     }
 
     #[test]
-    fn lowers_generic_impl_and_inline_do_match_arm() {
+    fn lowers_generic_impl_and_inline_semicolon_match_arm() {
         let source = r#"
 pub struct Boxed[T]
     pub value: T
@@ -1631,7 +1689,7 @@ impl[T] Boxed[T]
 
 fn log(value: Result[i32, String]) =
     match value
-        Ok(number) => do println!("{}", number)
+        Ok(number) => println!("{}", number);
         Err(error) => error
 "#;
 
@@ -1661,10 +1719,10 @@ fn log(value: Result<i32, String>) {
     fn preserves_value_dots_and_lowers_path_dots() {
         let source = r#"
 fn test(iter: Iter) =
-    do Foo.new()
-    do Foo::bar()
-    do iter.collect::<Vec[_]>()
-    do std.io.read()
+    Foo.new();
+    Foo::bar();
+    iter.collect::<Vec[_]>();
+    std.io.read();
 "#;
 
         assert_eq!(
@@ -1755,15 +1813,77 @@ pub fn id(value: i32) -> i32 {
     fn preserves_comment_indentation() {
         let source = r#"
 fn demo() =
-    // do explicitly discards the value.
-    do println!("hi")
+    // A trailing semicolon explicitly discards the value.
+    println!("hi");
 "#;
 
         assert_eq!(
             rust(source),
             r#"fn demo() {
-    // do explicitly discards the value.
+    // A trailing semicolon explicitly discards the value.
     println!("hi");
+}
+"#
+        );
+    }
+
+    #[test]
+    fn explicit_semicolon_discards_tail_expression() {
+        let source = r#"
+fn bump(value: i32) -> i32 = value + 1
+
+fn discarded_units(values: &[i32]) -> Vec[()] = values
+    .iter()
+    .map(|value| {
+        bump(*value);
+    })
+    .collect[Vec[()]]()
+"#;
+
+        assert_eq!(
+            rust(source),
+            r#"fn bump(value: i32) -> i32 {
+    value + 1
+}
+fn discarded_units(values: &[i32]) -> Vec<()> {
+    values
+        .iter()
+        .map(|value| {
+            bump(*value);
+        })
+        .collect::<Vec<()>>()
+}
+"#
+        );
+    }
+
+    #[test]
+    fn explicit_semicolon_discards_multiline_block_expression() {
+        let source = r#"
+struct Foo
+    x: i32
+
+fn demo(value: Option[i32]) =
+    match value;
+        Some(number) => number
+        None => 0
+    Foo;
+        x = 1
+"#;
+
+        assert_eq!(
+            rust(source),
+            r#"struct Foo {
+    x: i32,
+}
+fn demo(value: Option<i32>) {
+    match value {
+        Some(number) => number,
+        None => 0,
+    };
+    Foo {
+        x: 1,
+    };
 }
 "#
         );
@@ -1859,9 +1979,31 @@ impl User
 
 pub fn main() =
     let user = User.new(1, "Ada".to_string())
-    println!("{}", user.display_name())
+    println!("{}", user.display_name());
 "#
         );
+    }
+
+    #[test]
+    fn converts_rust_tail_discard_semicolons() {
+        let source = r#"
+fn bump(value: i32) -> i32 {
+    value + 1
+}
+
+fn discarded_units(values: &[i32]) -> Vec<()> {
+    values
+        .iter()
+        .map(|value| {
+            bump(*value);
+        })
+        .collect::<Vec<()>>()
+}
+"#;
+
+        let rusk = rust_to_rusk(source).unwrap();
+        assert!(rusk.contains("bump(*value);"));
+        assert!(transpile(&rusk).unwrap().rust.contains("bump(*value);"));
     }
 
     #[test]

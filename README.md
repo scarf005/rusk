@@ -64,7 +64,7 @@ just web # open web editor
 - function bodies with `=`
 - `if condition then expr else expr` expressions
 - Rust-style inline struct literals, e.g. `Self{ id, name }`
-- `do expr` for explicit semicolon/discard statements when inference is not enough
+- trailing `;` for explicit semicolon/discard statements when inference is not enough
 - Rust-style `#[...]` / `#![...]` attributes
 - Scala-style generic brackets in type positions, e.g. `Result[T, E]` -> `Result<T, E>`
 - method generic calls, e.g. `value.parse[i32]()` -> `value.parse::<i32>()`

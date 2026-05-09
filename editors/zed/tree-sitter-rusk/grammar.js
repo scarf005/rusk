@@ -51,7 +51,6 @@ module.exports = grammar({
       "const",
       "continue",
       "crate",
-      "do",
       "else",
       "enum",
       "extern",
