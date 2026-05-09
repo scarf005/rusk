@@ -35,7 +35,7 @@ export const Panel = ({
   <section
     class={`flex flex-col ${border} ${className}`}
   >
-    <div class="flex-none py-2 px-4 border-b-2 border-black bg-white uppercase font-bold text-sm tracking-wider flex items-center justify-between gap-3">
+    <div class="flex-none min-h-[50px] py-2 px-4 border-b-2 border-black bg-white uppercase font-bold text-sm tracking-wider flex items-center justify-between gap-3">
       <span>{title}</span>
       {action}
     </div>
