@@ -29,7 +29,8 @@ interface RunResponse extends CommandResult {
 const RUN_TIMEOUT_MS = 5_000
 const MAX_BODY_BYTES = 1_000_000
 
-const isExampleRoute = (url?: string) => url?.startsWith("/examples/") ?? false
+const isExampleRoute = (url?: string) =>
+  url?.startsWith("/examples/") || url?.startsWith("/rust-examples/") || false
 
 const exampleRouteFallback = (): Plugin => ({
   name: "example-route-fallback",
