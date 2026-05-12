@@ -11,6 +11,7 @@ node_modules
 dist
 dist-ssr
 .vite
+.wrangler
 *.local
 /src/wasm/rusk.d.ts
 /src/wasm/rusk.internal.js
