@@ -1,6 +1,6 @@
 # Rusk Zed extension
 
-Local Zed extension for `.rsk` files.
+Local Zed extension for `.rsk` and `.rk` files.
 
 ## Install the LSP
 
@@ -16,7 +16,7 @@ cargo install --path crates/rusk --bin rusk-lsp
 2. Choose `Install Dev Extension`.
 3. Select this directory: `editors/zed`.
 
-The extension registers the `Rusk` language, starts `rusk-lsp`, and provides Tree-sitter highlighting for `.rsk` files.
+The extension registers the `Rusk` language, starts `rusk-lsp`, and provides Tree-sitter highlighting for `.rsk` and `.rk` files.
 
 If `rusk-lsp` is not on Zed's PATH, configure it in Zed settings:
 

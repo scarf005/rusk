@@ -1,0 +1,11 @@
+#![allow(dead_code)]
+use std::collections::HashMap
+pub fn counts() -> HashMap<String, i32> {
+    let mut map = HashMap::new()
+    map.insert("one".to_string(), 1)
+    map.insert("two".to_string(), 2)
+    map
+}
+pub fn main() {
+    println!("{}", counts().len())
+}

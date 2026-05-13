@@ -2,6 +2,10 @@ import { useEffect, useRef } from "preact/hooks"
 import { computed, signal, useSignal } from "@preact/signals"
 import { useLocation } from "wouter-preact"
 import {
+  convert_ruk_to_rusk,
+  convert_ruk_to_rust,
+  convert_rusk_to_ruk,
+  convert_rust_to_ruk,
   convert_rust_to_rusk,
   format_rusk,
   transpile_syntax_tree_json,
@@ -11,20 +15,21 @@ import { InputEditor, OutputDisplay } from "./Editor.tsx"
 import { Header, Layout, Main, Panel } from "./Layout.tsx"
 import {
   DEFAULT_EXAMPLE_NAME,
-  DEFAULT_RUST_EXAMPLE_NAME,
+  DEFAULT_RUK_EXAMPLE_NAME,
   EXAMPLE_NAMES,
   ExampleName,
   exampleNameFromPath,
   examplePath,
   exampleSource,
-  RUST_EXAMPLE_NAMES,
-  RustExampleName,
-  rustExampleNameFromPath,
-  rustExamplePath,
-  rustExampleSource,
+  RUK_EXAMPLE_NAMES,
+  RukExampleName,
+  rukExampleNameFromPath,
+  rukExamplePath,
+  rukExampleSource,
 } from "./constants.ts"
 
-type ConvertMode = "rusk-to-rust" | "rust-to-rusk"
+type SourcePanel = "rusk" | "ruk"
+type EditSide = "source" | "rust"
 type OutputMode = "rust" | "syntax-tree"
 type RunState = "idle" | "running"
 
@@ -43,10 +48,12 @@ type RunResponse = {
 const isDevServer =
   (import.meta as ImportMeta & { env: { DEV: boolean } }).env.DEV
 
-const convertMode = signal<ConvertMode>("rusk-to-rust")
+const sourcePanel = signal<SourcePanel>("rusk")
+const editSide = signal<EditSide>("source")
 const selectedExample = signal<ExampleName>(DEFAULT_EXAMPLE_NAME)
-const selectedRustExample = signal<RustExampleName>(DEFAULT_RUST_EXAMPLE_NAME)
-const inputCode = signal<string>(exampleSource(DEFAULT_EXAMPLE_NAME))
+const selectedRukExample = signal<RukExampleName>(DEFAULT_RUK_EXAMPLE_NAME)
+const sourceCode = signal<string>(exampleSource(DEFAULT_EXAMPLE_NAME))
+const rustCode = signal<string>(transpile_to_rust(sourceCode.value))
 const outputMode = signal<OutputMode>("rust")
 const runOutput = signal("")
 const runResult = signal<RunResponse | null>(null)
@@ -55,32 +62,41 @@ const runState = signal<RunState>("idle")
 const converted = computed(() => {
   const started = performance.now()
   try {
-    if (convertMode.value === "rust-to-rusk") {
-      const rusk = convert_rust_to_rusk(inputCode.value)
-      const elapsedMs = performance.now() - started
-      return {
-        rust: "",
-        rusk,
-        syntaxTree: "",
-        rustMs: elapsedMs,
-        ruskMs: elapsedMs,
-        syntaxTreeMs: 0,
-        error: "",
-      }
-    }
-
     const rustStarted = performance.now()
-    const rust = transpile_to_rust(inputCode.value)
+    const rust = editSide.value === "rust"
+      ? rustCode.value
+      : sourcePanel.value === "rusk"
+      ? transpile_to_rust(sourceCode.value)
+      : convert_ruk_to_rust(sourceCode.value)
     const rustMs = performance.now() - rustStarted
+
+    const ruskStarted = performance.now()
+    const rusk = editSide.value === "rust"
+      ? convert_rust_to_rusk(rust)
+      : sourcePanel.value === "rusk"
+      ? sourceCode.value
+      : convert_ruk_to_rusk(sourceCode.value)
+    const ruskMs = performance.now() - ruskStarted
+
+    const rukStarted = performance.now()
+    const ruk = editSide.value === "rust"
+      ? convert_rust_to_ruk(rust)
+      : sourcePanel.value === "ruk"
+      ? sourceCode.value
+      : convert_rusk_to_ruk(sourceCode.value)
+    const rukMs = performance.now() - rukStarted
+
     const syntaxTreeStarted = performance.now()
-    const syntaxTree = transpile_syntax_tree_json(inputCode.value)
+    const syntaxTree = transpile_syntax_tree_json(rusk)
     const syntaxTreeMs = performance.now() - syntaxTreeStarted
     return {
       rust,
-      rusk: "",
+      rusk,
+      ruk,
       syntaxTree,
       rustMs,
-      ruskMs: 0,
+      ruskMs,
+      rukMs,
       syntaxTreeMs,
       error: "",
     }
@@ -89,33 +105,29 @@ const converted = computed(() => {
     return {
       rust: "",
       rusk: "",
+      ruk: "",
       syntaxTree: "",
       rustMs: elapsedMs,
       ruskMs: elapsedMs,
+      rukMs: elapsedMs,
       syntaxTreeMs: elapsedMs,
       error: stringifyError(error),
     }
   }
 })
 
-const outputText = computed(() => {
-  if (converted.value.error) {
-    return convertMode.value === "rusk-to-rust"
-      ? "// Fix the Rusk source to see generated output."
-      : "// Fix the Rust source to see generated output."
-  }
-  if (convertMode.value === "rust-to-rusk") return converted.value.rusk
-  return outputMode.value === "rust"
-    ? converted.value.rust
-    : converted.value.syntaxTree
-})
+const sourcePanelText = computed(() => sourceCode.value)
+const rustPanelText = computed(() =>
+  editSide.value === "rust" ? rustCode.value : converted.value.rust
+)
+const outputText = computed(() =>
+  outputMode.value === "rust" ? rustPanelText.value : converted.value.syntaxTree
+)
 
 const stats = computed(() => ({
-  sourceLines: countLines(inputCode.value),
+  sourceLines: countLines(sourcePanelText.value),
   outputLines: countLines(outputText.value),
-  outputMs: convertMode.value === "rust-to-rusk"
-    ? converted.value.ruskMs
-    : outputMode.value === "rust"
+  outputMs: outputMode.value === "rust"
     ? converted.value.rustMs
     : converted.value.syntaxTreeMs,
 }))
@@ -123,7 +135,7 @@ const stats = computed(() => ({
 export function App() {
   const [location, navigate] = useLocation()
   const copied = useSignal(false)
-  const inputRef = useRef<HTMLElement>(null)
+  const sourceRef = useRef<HTMLElement>(null)
   const outputRef = useRef<HTMLElement>(null)
   const isScrollingRef = useRef(false)
 
@@ -132,25 +144,44 @@ export function App() {
     runResult.value = null
   }
 
-  const setInputCode = (value: string) => {
-    inputCode.value = value
+  const setSourceCode = (value: string) => {
+    editSide.value = "source"
+    sourceCode.value = value
+    clearRun()
+  }
+
+  const setRustCode = (value: string) => {
+    editSide.value = "rust"
+    rustCode.value = value
+    try {
+      sourceCode.value = sourcePanel.value === "rusk"
+        ? convert_rust_to_rusk(value)
+        : convert_rust_to_ruk(value)
+    } catch (_) {
+      // Keep the last source panel text while the Rust panel is invalid.
+    }
     clearRun()
   }
 
   const showExample = (name: ExampleName) => {
-    convertMode.value = "rusk-to-rust"
+    sourcePanel.value = "rusk"
+    editSide.value = "source"
     selectedExample.value = name
-    setInputCode(exampleSource(name))
-    inputRef.current?.scrollTo({ top: 0 })
+    sourceCode.value = exampleSource(name)
+    rustCode.value = transpile_to_rust(sourceCode.value)
+    clearRun()
+    sourceRef.current?.scrollTo({ top: 0 })
     outputRef.current?.scrollTo({ top: 0 })
   }
 
-  const showRustExample = (name: RustExampleName) => {
-    convertMode.value = "rust-to-rusk"
-    outputMode.value = "rust"
-    selectedRustExample.value = name
-    setInputCode(rustExampleSource(name))
-    inputRef.current?.scrollTo({ top: 0 })
+  const showRukExample = (name: RukExampleName) => {
+    sourcePanel.value = "ruk"
+    editSide.value = "source"
+    selectedRukExample.value = name
+    sourceCode.value = rukExampleSource(name)
+    rustCode.value = convert_ruk_to_rust(sourceCode.value)
+    clearRun()
+    sourceRef.current?.scrollTo({ top: 0 })
     outputRef.current?.scrollTo({ top: 0 })
   }
 
@@ -159,7 +190,7 @@ export function App() {
     const ruskName = path === "/"
       ? DEFAULT_EXAMPLE_NAME
       : exampleNameFromPath(path)
-    const rustName = rustExampleNameFromPath(path)
+    const rukName = rukExampleNameFromPath(path)
 
     if (path === "/") {
       navigate(examplePath(DEFAULT_EXAMPLE_NAME))
@@ -168,46 +199,45 @@ export function App() {
 
     if (ruskName) {
       if (
-        convertMode.value === "rusk-to-rust" &&
+        sourcePanel.value === "rusk" &&
         selectedExample.value === ruskName &&
-        inputCode.value === exampleSource(ruskName)
+        sourceCode.value === exampleSource(ruskName)
       ) return
-
       showExample(ruskName)
       return
     }
 
-    if (rustName) {
+    if (rukName) {
       if (
-        convertMode.value === "rust-to-rusk" &&
-        selectedRustExample.value === rustName &&
-        inputCode.value === rustExampleSource(rustName)
+        sourcePanel.value === "ruk" &&
+        selectedRukExample.value === rukName &&
+        sourceCode.value === rukExampleSource(rukName)
       ) return
-
-      showRustExample(rustName)
+      showRukExample(rukName)
       return
     }
 
     navigate(examplePath(DEFAULT_EXAMPLE_NAME))
   }, [location, navigate])
 
-  const handleScroll = (source: "input" | "output") => {
+  const handleScroll = (source: "source" | "output") => {
     if (isScrollingRef.current) return
 
-    const inputEl = inputRef.current
+    const sourceEl = sourceRef.current
     const outputEl = outputRef.current
-    if (!inputEl || !outputEl) return
+    if (!sourceEl || !outputEl) return
 
     isScrollingRef.current = true
-    if (source === "input") {
-      const ratio = inputEl.scrollTop /
-        (inputEl.scrollHeight - inputEl.clientHeight || 1)
+    if (source === "source") {
+      const ratio = sourceEl.scrollTop /
+        (sourceEl.scrollHeight - sourceEl.clientHeight || 1)
       outputEl.scrollTop = ratio *
         (outputEl.scrollHeight - outputEl.clientHeight)
     } else {
       const ratio = outputEl.scrollTop /
         (outputEl.scrollHeight - outputEl.clientHeight || 1)
-      inputEl.scrollTop = ratio * (inputEl.scrollHeight - inputEl.clientHeight)
+      sourceEl.scrollTop = ratio *
+        (sourceEl.scrollHeight - sourceEl.clientHeight)
     }
     setTimeout(() => isScrollingRef.current = false, 10)
   }
@@ -215,20 +245,36 @@ export function App() {
   const loadExample = (name: ExampleName) => {
     showExample(name)
     const path = examplePath(name)
-    if (location === path) return
-    navigate(path)
+    if (location !== path) navigate(path)
   }
 
-  const loadRustExample = (name: RustExampleName) => {
-    showRustExample(name)
-    const path = rustExamplePath(name)
-    if (location === path) return
-    navigate(path)
+  const loadRukExample = (name: RukExampleName) => {
+    showRukExample(name)
+    const path = rukExamplePath(name)
+    if (location !== path) navigate(path)
   }
 
-  const setConvertMode = (mode: ConvertMode) => {
-    if (mode === "rusk-to-rust") loadExample(selectedExample.value)
-    else loadRustExample(selectedRustExample.value)
+  const setSourcePanel = (panel: SourcePanel) => {
+    if (panel === sourcePanel.value) return
+    const nextSource = panel === "rusk"
+      ? converted.value.rusk
+      : converted.value.ruk
+    const matchingRuskName = EXAMPLE_NAMES.find((name) =>
+      name === selectedRukExample.value as string
+    )
+    const matchingRukName = RUK_EXAMPLE_NAMES.find((name) =>
+      name === selectedExample.value as string
+    )
+    if (panel === "rusk" && matchingRuskName) {
+      selectedExample.value = matchingRuskName
+    }
+    if (panel === "ruk" && matchingRukName) {
+      selectedRukExample.value = matchingRukName
+    }
+    sourcePanel.value = panel
+    sourceCode.value = nextSource
+    if (panel === "rusk") navigate(examplePath(selectedExample.value))
+    else navigate(rukExamplePath(selectedRukExample.value))
   }
 
   const copyOutput = async () => {
@@ -238,17 +284,13 @@ export function App() {
   }
 
   const formatInput = () => {
-    if (convertMode.value === "rusk-to-rust") {
-      setInputCode(format_rusk(inputCode.value, 100))
+    if (sourcePanel.value === "rusk") {
+      setSourceCode(format_rusk(sourceCode.value, 100))
     }
   }
 
   const runRust = async () => {
-    if (
-      convertMode.value !== "rusk-to-rust" ||
-      converted.value.error ||
-      runState.value === "running"
-    ) return
+    if (converted.value.error || runState.value === "running") return
 
     runState.value = "running"
     runResult.value = null
@@ -260,9 +302,8 @@ export function App() {
         body: JSON.stringify({ rust: converted.value.rust }),
       })
       const result = await response.json() as RunResponse | { error: string }
-      if ("error" in result) {
-        runOutput.value = result.error
-      } else {
+      if ("error" in result) runOutput.value = result.error
+      else {
         runResult.value = result
         runOutput.value = formatRunOutput(result)
       }
@@ -283,35 +324,34 @@ export function App() {
         </div>
 
         <div class="flex-1 flex overflow-x-auto w-full border-b-2 lg:border-b-0 lg:border-r-2 border-black no-scrollbar bg-white">
-          {(["rusk-to-rust", "rust-to-rusk"] as ConvertMode[]).map((mode) => (
+          {(["rusk", "ruk"] as SourcePanel[]).map((panel) => (
             <button
               type="button"
-              key={mode}
-              onClick={() => setConvertMode(mode)}
+              key={panel}
+              onClick={() => setSourcePanel(panel)}
               class={`flex-none px-4 md:px-6 py-3 font-bold text-xs md:text-sm uppercase transition-none border-r-2 border-black focus:outline-none whitespace-nowrap ${
-                convertMode.value === mode
+                sourcePanel.value === panel
                   ? "bg-black text-white"
                   : "bg-white text-black hover:bg-gray-200"
               }`}
             >
-              {mode === "rusk-to-rust" ? "Rusk → Rust" : "Rust → Rusk"}
+              {panel.toUpperCase()}
             </button>
           ))}
-          {convertMode.value === "rusk-to-rust" &&
-            (["rust", "syntax-tree"] as OutputMode[]).map((mode) => (
-              <button
-                type="button"
-                key={mode}
-                onClick={() => outputMode.value = mode}
-                class={`flex-none px-4 md:px-6 py-3 font-bold text-xs md:text-sm uppercase transition-none border-r-2 border-black focus:outline-none whitespace-nowrap ${
-                  outputMode.value === mode
-                    ? "bg-black text-white"
-                    : "bg-white text-black hover:bg-gray-200"
-                }`}
-              >
-                {mode === "rust" ? "Rust Output" : "Syntax Tree"}
-              </button>
-            ))}
+          {(["rust", "syntax-tree"] as OutputMode[]).map((mode) => (
+            <button
+              type="button"
+              key={mode}
+              onClick={() => outputMode.value = mode}
+              class={`flex-none px-4 md:px-6 py-3 font-bold text-xs md:text-sm uppercase transition-none border-r-2 border-black focus:outline-none whitespace-nowrap ${
+                outputMode.value === mode
+                  ? "bg-black text-white"
+                  : "bg-white text-black hover:bg-gray-200"
+              }`}
+            >
+              {mode === "rust" ? "Rust" : "Syntax Tree"}
+            </button>
+          ))}
         </div>
 
         <div class="flex-none w-full lg:w-auto flex flex-row border-b-2 lg:border-b-0 border-black bg-white">
@@ -322,20 +362,18 @@ export function App() {
               </span>
             </div>
             <select
-              value={convertMode.value === "rusk-to-rust"
+              value={sourcePanel.value === "rusk"
                 ? selectedExample.value
-                : selectedRustExample.value}
+                : selectedRukExample.value}
               onChange={(event) =>
-                convertMode.value === "rusk-to-rust"
+                sourcePanel.value === "rusk"
                   ? loadExample(event.currentTarget.value as ExampleName)
-                  : loadRustExample(
-                    event.currentTarget.value as RustExampleName,
-                  )}
+                  : loadRukExample(event.currentTarget.value as RukExampleName)}
               class="appearance-none w-full lg:w-[210px] bg-white pl-14 pr-8 py-3 text-xs md:text-sm font-bold border-none focus:ring-0 cursor-pointer uppercase rounded-none h-full"
             >
-              {(convertMode.value === "rusk-to-rust"
+              {(sourcePanel.value === "rusk"
                 ? EXAMPLE_NAMES
-                : RUST_EXAMPLE_NAMES).map((name) => (
+                : RUK_EXAMPLE_NAMES).map((name) => (
                   <option key={name} value={name}>{name}</option>
                 ))}
             </select>
@@ -353,11 +391,9 @@ export function App() {
 
       <Main>
         <Panel
-          title={`${
-            convertMode.value === "rusk-to-rust" ? "Rusk" : "Rust"
-          } Input (${stats.value.sourceLines} lines)`}
+          title={`${sourcePanel.value.toUpperCase()} (${stats.value.sourceLines} lines)`}
           class="w-full md:w-1/2 h-1/2 md:h-full"
-          action={convertMode.value === "rusk-to-rust" && (
+          action={sourcePanel.value === "rusk" && (
             <button
               type="button"
               onClick={formatInput}
@@ -368,22 +404,18 @@ export function App() {
           )}
         >
           <InputEditor
-            editorRef={inputRef}
-            value={inputCode.value}
-            language={convertMode.value === "rusk-to-rust" ? "rusk" : "rust"}
-            onChange={setInputCode}
-            onScroll={() => handleScroll("input")}
+            editorRef={sourceRef}
+            value={sourcePanelText.value}
+            language={sourcePanel.value}
+            onChange={setSourceCode}
+            onScroll={() => handleScroll("source")}
           />
         </Panel>
 
         <div class="w-full md:w-1/2 h-1/2 md:h-full flex flex-col min-h-0">
           <Panel
             title={`${
-              convertMode.value === "rust-to-rusk"
-                ? "Rusk Output"
-                : outputMode.value === "rust"
-                ? "Rust Output"
-                : "Syntax Tree"
+              outputMode.value === "rust" ? "Rust" : "Syntax Tree"
             } (${stats.value.outputLines} lines, ${
               formatMs(stats.value.outputMs)
             })`}
@@ -391,7 +423,7 @@ export function App() {
             border="border-b-2 border-black"
             action={
               <div class="flex gap-2">
-                {isDevServer && convertMode.value === "rusk-to-rust" && (
+                {isDevServer && outputMode.value === "rust" && (
                   <button
                     type="button"
                     onClick={runRust}
@@ -412,17 +444,25 @@ export function App() {
               </div>
             }
           >
-            <OutputDisplay
-              outputRef={outputRef}
-              value={outputText.value}
-              language={convertMode.value === "rust-to-rusk"
-                ? "rusk"
-                : outputMode.value === "rust"
-                ? "rust"
-                : "json"}
-              error={converted.value.error}
-              onScroll={() => handleScroll("output")}
-            />
+            {outputMode.value === "rust"
+              ? (
+                <InputEditor
+                  editorRef={outputRef}
+                  value={rustPanelText.value}
+                  language="rust"
+                  onChange={setRustCode}
+                  onScroll={() => handleScroll("output")}
+                />
+              )
+              : (
+                <OutputDisplay
+                  outputRef={outputRef}
+                  value={outputText.value}
+                  language="json"
+                  error={converted.value.error}
+                  onScroll={() => handleScroll("output")}
+                />
+              )}
           </Panel>
 
           <Panel

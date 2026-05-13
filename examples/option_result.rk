@@ -1,0 +1,19 @@
+pub fn first_positive(values: &[i32]) -> Option<i32> {
+    for value in values {
+        if *value > 0 {
+            return Some(*value)
+        }
+    }
+    None
+}
+pub fn parse_positive(raw: &str) -> Result<Option<i32>, std::num::ParseIntError> {
+    let value = raw.parse::<i32>()?
+    if value > 0 { Ok(Some(value)) } else { Ok(None) }
+}
+pub fn main() {
+    println!("{:?}", first_positive(&[-1, 2]))
+    match parse_positive("3") {
+        Ok(value) => println!("{:?}", value),
+        Err(error) => eprintln!("{error}"),
+    }
+}

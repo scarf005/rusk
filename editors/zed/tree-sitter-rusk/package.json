@@ -9,7 +9,7 @@
   "tree-sitter": [
     {
       "scope": "source.rusk",
-      "file-types": ["rsk"]
+      "file-types": ["rsk", "rk"]
     }
   ]
 }

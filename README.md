@@ -2,7 +2,7 @@
 
 ![](./thumbnail.webp)
 
-`rusk` is an alternative syntax for [rust](https://rust-lang.org) inspired by the [2023 post rust's ugly syntax ](https://matklad.github.io/2023/01/26/rusts-ugly-syntax.html).
+`rusk` is an alternative syntax for [rust](https://rust-lang.org) inspired by the [2023 post rust's ugly syntax ](https://matklad.github.io/2023/01/26/rusts-ugly-syntax.html). `ruk` (`.rk`) is Rust syntax with optional semicolons inferred from function signatures.
 
 ## Example
 
@@ -47,8 +47,10 @@ pub fn main() {
 
 ```sh
 rusk input.rsk -o output.rs
+rusk input.rk -o output.rs
 rusk transpile input.rsk --source-map output.map.json
 rusk from-rust input.rs -o output.rsk
+rusk to-ruk input.rs -o output.rk
 rusk fmt input.rsk -o input.rsk --line-width 100
 cat input.rsk | rusk
 rusk run
@@ -73,7 +75,7 @@ just web # open web editor
 - macro definitions with indentation-based `macro_rules!` arms
 - source formatter that preserves existing line break style; only line width is configurable
 - hierarchical JSON source map generation
-- Rust-to-Rusk conversion for formatted Rust source
+- Rust-to-Rusk, Rust-to-Ruk, Ruk-to-Rust, Ruk-to-Rusk, and Rusk-to-Ruk conversion
 
 ## Formatter
 
@@ -86,7 +88,7 @@ rusk fmt src/main.rsk --line-width 120
 
 ## Cargo wrapper
 
-`rusk` can wrap common Cargo commands. It transpiles `.rsk` files under Cargo source roots (`src`, `examples`, `tests`, `benches`, and `build.rsk`) into temporary generated `.rs` files, runs Cargo, then removes the generated files.
+`rusk` can wrap common Cargo commands. It transpiles `.rsk` and `.rk` files under Cargo source roots (`src`, `examples`, `tests`, `benches`, plus `build.rsk`/`build.rk`) into generated `.rs` files, then runs Cargo.
 
 ```sh
 rusk run        # cargo run
@@ -98,7 +100,7 @@ Existing non-generated `.rs` files are never overwritten.
 
 ## Language Server
 
-`rusk-lsp` is a standard stdio Language Server Protocol server. It currently reports transpile diagnostics and document symbols for `.rsk` files.
+`rusk-lsp` is a standard stdio Language Server Protocol server. It reports diagnostics for `.rsk` and `.rk` files, document symbols for `.rsk`, and proxies Rust features through generated Rust when `rust-analyzer` is available.
 
 ```sh
 cargo install --path crates/rusk --bin rusk-lsp
@@ -106,6 +108,6 @@ cargo install --path crates/rusk --bin rusk-lsp
 
 ## Current limits
 
-This is a compiler-front-end MVP, not a full Rust replacement yet. It intentionally avoids proc-macro DSL parsing, rust-analyzer proxying, Zed extension packaging, and full type-aware dot disambiguation.
+This is a compiler-front-end MVP, not a full Rust replacement yet. It intentionally avoids proc-macro DSL parsing and full type-aware dot disambiguation.
 
 Dot and bracket disambiguation is heuristic in expression positions. Type signatures are lowered as type syntax, so `Result[foo, err]` becomes `Result<foo, err>`, but expression paths use Rust naming conventions: `Vec.from(pair)` becomes `Vec::from(pair)` because `Vec` starts with an uppercase letter, while `picked.parse[i32]()` becomes `picked.parse::<i32>()` and keeps the receiver dot. Lowercase type paths in expression positions are ambiguous and may need Rust's escape hatch syntax, e.g. write `foo::new()` instead of `foo.new()` when `foo` is a lowercase type or module path.

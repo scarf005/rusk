@@ -15,7 +15,7 @@ import { defaultKeymap, history, historyKeymap } from "@codemirror/commands"
 import { json } from "@codemirror/lang-json"
 import { rust } from "@codemirror/lang-rust"
 
-type CodeLanguage = "rusk" | "rust" | "json" | "text"
+type CodeLanguage = "rusk" | "ruk" | "rust" | "json" | "text"
 
 type RuskState = { inString: boolean }
 
@@ -214,7 +214,7 @@ class CodeMirror extends Component<CodeMirrorProps> {
 
 interface InputEditorProps {
   value: string
-  language?: "rusk" | "rust"
+  language?: "rusk" | "ruk" | "rust"
   onChange: (value: string) => void
   onScroll?: () => void
   editorRef?: Ref<HTMLElement>
@@ -239,7 +239,7 @@ export const InputEditor = ({
 
 interface OutputDisplayProps {
   value: string
-  language: "rusk" | "rust" | "json" | "text"
+  language: "rusk" | "ruk" | "rust" | "json" | "text"
   error?: string
   onScroll?: () => void
   outputRef?: Ref<HTMLElement>

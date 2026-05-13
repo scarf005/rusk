@@ -56,7 +56,8 @@ mod wasm_api {
     use wasm_bindgen::prelude::*;
 
     use super::{
-        FormatOptions, TranspileError, format_source, rust_to_rusk, source_map_json, transpile,
+        FormatOptions, TranspileError, format_source, ruk_to_rusk, ruk_to_rust, rusk_to_ruk,
+        rust_to_ruk, rust_to_rusk, source_map_json, transpile,
     };
 
     #[wasm_bindgen]
@@ -81,6 +82,26 @@ mod wasm_api {
     #[wasm_bindgen]
     pub fn convert_rust_to_rusk(source: &str) -> Result<String, JsValue> {
         rust_to_rusk(source).map_err(error_to_js_value)
+    }
+
+    #[wasm_bindgen]
+    pub fn convert_rust_to_ruk(source: &str) -> Result<String, JsValue> {
+        rust_to_ruk(source).map_err(error_to_js_value)
+    }
+
+    #[wasm_bindgen]
+    pub fn convert_ruk_to_rust(source: &str) -> Result<String, JsValue> {
+        ruk_to_rust(source).map_err(error_to_js_value)
+    }
+
+    #[wasm_bindgen]
+    pub fn convert_ruk_to_rusk(source: &str) -> Result<String, JsValue> {
+        ruk_to_rusk(source).map_err(error_to_js_value)
+    }
+
+    #[wasm_bindgen]
+    pub fn convert_rusk_to_ruk(source: &str) -> Result<String, JsValue> {
+        rusk_to_ruk(source).map_err(error_to_js_value)
     }
 
     fn error_to_js_value(error: TranspileError) -> JsValue {
@@ -155,6 +176,360 @@ pub fn format_source(source: &str, options: FormatOptions) -> Result<String, Tra
             .collect::<Vec<_>>()
             .join("\n"),
     ))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceSyntax {
+    Rusk,
+    Ruk,
+    Rust,
+}
+
+pub fn to_rust(source: &str, syntax: SourceSyntax) -> Result<String, TranspileError> {
+    match syntax {
+        SourceSyntax::Rusk => transpile(source).map(|output| output.rust),
+        SourceSyntax::Ruk => ruk_to_rust(source),
+        SourceSyntax::Rust => Ok(ensure_trailing_newline(source)),
+    }
+}
+
+pub fn to_ruk(source: &str, syntax: SourceSyntax) -> Result<String, TranspileError> {
+    match syntax {
+        SourceSyntax::Rusk => rusk_to_ruk(source),
+        SourceSyntax::Ruk => Ok(ensure_trailing_newline(source)),
+        SourceSyntax::Rust => rust_to_ruk(source),
+    }
+}
+
+pub fn to_rusk(source: &str, syntax: SourceSyntax) -> Result<String, TranspileError> {
+    match syntax {
+        SourceSyntax::Rusk => Ok(ensure_trailing_newline(source)),
+        SourceSyntax::Ruk => ruk_to_rusk(source),
+        SourceSyntax::Rust => rust_to_rusk(source),
+    }
+}
+
+pub fn rusk_to_ruk(source: &str) -> Result<String, TranspileError> {
+    let rust = transpile(source)?.rust;
+    rust_to_ruk(&rust)
+}
+
+pub fn ruk_to_rusk(source: &str) -> Result<String, TranspileError> {
+    let rust = ruk_to_rust(source)?;
+    rust_to_rusk(&rust)
+}
+
+pub fn rust_to_ruk(source: &str) -> Result<String, TranspileError> {
+    let mut output = Vec::new();
+    let mut brace_depth = 0usize;
+    let mut closure_body_depths = Vec::<usize>::new();
+    let mut function_body_depths = Vec::<(usize, bool)>::new();
+    let lines = source.lines().collect::<Vec<_>>();
+    for (index, raw) in lines.iter().enumerate() {
+        let line = index + 1;
+        if raw.contains('\t') {
+            return Err(TranspileError {
+                line,
+                message: "tabs are not supported; use spaces".to_string(),
+            });
+        }
+        let raw = raw.trim_end();
+        let text = raw.trim_start();
+        if raw.trim() == GENERATED_HEADER.trim_end() {
+            continue;
+        }
+        let next_line_closes_block = next_non_empty_line(&lines, index)
+            .is_some_and(|line| line.trim_start().starts_with('}'));
+        let preserve_tail_closure_semicolon = !closure_body_depths.is_empty()
+            && raw.trim_end().ends_with(';')
+            && next_line_closes_block;
+        let preserve_returning_function_tail_semicolon = function_body_depths
+            .last()
+            .is_some_and(|(depth, returns_value)| *returns_value && *depth == brace_depth)
+            && raw.trim_end().ends_with(';')
+            && next_line_closes_block;
+        output.push(
+            if preserve_tail_closure_semicolon || preserve_returning_function_tail_semicolon {
+                raw.to_string()
+            } else {
+                strip_rust_semicolon(raw)
+            },
+        );
+        if text.ends_with('{') && is_function(strip_open_brace(text)) {
+            function_body_depths.push((
+                brace_depth + 1,
+                function_returns_value(strip_open_brace(text)),
+            ));
+        }
+        if opens_closure_block(text) {
+            closure_body_depths.push(brace_depth + 1);
+        }
+        brace_depth = brace_depth
+            .saturating_add(count_unquoted(text, '{'))
+            .saturating_sub(count_unquoted(text, '}'));
+        while closure_body_depths
+            .last()
+            .is_some_and(|depth| brace_depth < *depth)
+        {
+            closure_body_depths.pop();
+        }
+        while function_body_depths
+            .last()
+            .is_some_and(|(depth, _)| brace_depth < *depth)
+        {
+            function_body_depths.pop();
+        }
+    }
+    Ok(ensure_trailing_newline(
+        &trim_outer_blank_lines(output).join("\n"),
+    ))
+}
+
+pub fn ruk_to_rust(source: &str) -> Result<String, TranspileError> {
+    RukSemicolonInferer::new(source).infer()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RukScopeKind {
+    Function { returns_value: bool },
+    Trait,
+    Item,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RukScope {
+    indent: usize,
+    kind: RukScopeKind,
+}
+
+#[derive(Debug)]
+struct RukSemicolonInferer<'a> {
+    lines: Vec<&'a str>,
+    scopes: Vec<RukScope>,
+}
+
+impl<'a> RukSemicolonInferer<'a> {
+    fn new(source: &'a str) -> Self {
+        Self {
+            lines: source.lines().collect(),
+            scopes: Vec::new(),
+        }
+    }
+
+    fn infer(mut self) -> Result<String, TranspileError> {
+        let mut output = Vec::new();
+        for index in 0..self.lines.len() {
+            let line_number = index + 1;
+            let raw = self.lines[index].trim_end();
+            if raw.contains('\t') {
+                return Err(TranspileError {
+                    line: line_number,
+                    message: "tabs are not supported; use spaces".to_string(),
+                });
+            }
+            let text = raw.trim_start();
+            let indent = raw_indent(raw);
+            self.close_scopes_for_line(text, indent);
+            let converted = self.infer_line(raw, text, index);
+            output.push(converted);
+            self.open_scope_from_line(text, indent);
+        }
+        Ok(ensure_trailing_newline(&output.join("\n")))
+    }
+
+    fn close_scopes_for_line(&mut self, text: &str, indent: usize) {
+        if !text.starts_with('}') {
+            return;
+        }
+        while self
+            .scopes
+            .last()
+            .is_some_and(|scope| scope.indent >= indent)
+        {
+            self.scopes.pop();
+        }
+    }
+
+    fn infer_line(&self, raw: &str, text: &str, index: usize) -> String {
+        if !ruk_line_needs_semicolon(text) {
+            return raw.to_string();
+        }
+        if !self.should_add_semicolon(text, index) {
+            return raw.to_string();
+        }
+        format!("{raw};")
+    }
+
+    fn should_add_semicolon(&self, text: &str, index: usize) -> bool {
+        if is_let(text)
+            || is_assignment(text)
+            || is_jump_statement(text)
+            || is_use_or_extern_crate(text)
+        {
+            return true;
+        }
+        if self.in_trait_scope() && looks_like_trait_item_without_body(text) {
+            return true;
+        }
+        if looks_like_item_header_without_body(text) {
+            return false;
+        }
+        if self
+            .next_code_line(index)
+            .is_some_and(|next| next.trim_start().starts_with('.'))
+        {
+            return false;
+        }
+        if !self.is_tail_of_current_scope(index) {
+            return true;
+        }
+        !self.current_function_returns_value()
+    }
+
+    fn is_tail_of_current_scope(&self, index: usize) -> bool {
+        self.next_code_line(index)
+            .is_none_or(|next| next.trim_start().starts_with('}'))
+    }
+
+    fn next_code_line(&self, index: usize) -> Option<&str> {
+        self.lines.iter().skip(index + 1).copied().find(|line| {
+            let text = line.trim();
+            !text.is_empty() && !text.starts_with("//")
+        })
+    }
+
+    fn in_trait_scope(&self) -> bool {
+        self.scopes
+            .iter()
+            .rev()
+            .any(|scope| matches!(scope.kind, RukScopeKind::Trait))
+    }
+
+    fn current_function_returns_value(&self) -> bool {
+        self.scopes.iter().rev().any(|scope| {
+            matches!(
+                scope.kind,
+                RukScopeKind::Function {
+                    returns_value: true
+                }
+            )
+        })
+    }
+
+    fn open_scope_from_line(&mut self, text: &str, indent: usize) {
+        if !text.ends_with('{') {
+            return;
+        }
+        let header = strip_open_brace(text);
+        let kind = if is_function(header) {
+            RukScopeKind::Function {
+                returns_value: function_returns_value(header),
+            }
+        } else if is_trait_item(header) {
+            RukScopeKind::Trait
+        } else {
+            RukScopeKind::Item
+        };
+        self.scopes.push(RukScope { indent, kind });
+    }
+}
+
+fn strip_rust_semicolon(raw: &str) -> String {
+    let Some((code, comment)) = split_line_comment(raw) else {
+        return raw
+            .strip_suffix(';')
+            .map(|line| line.trim_end().to_string())
+            .unwrap_or_else(|| raw.to_string());
+    };
+    code.strip_suffix(';')
+        .map(|line| format!("{} {comment}", line.trim_end()))
+        .unwrap_or_else(|| raw.to_string())
+}
+
+fn count_unquoted(text: &str, needle: char) -> usize {
+    let mut count = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for character in text.chars() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match character {
+            '\\' if in_string => escaped = true,
+            '"' => in_string = !in_string,
+            character if !in_string && character == needle => count += 1,
+            _ => {}
+        }
+    }
+    count
+}
+
+fn next_non_empty_line<'a>(lines: &[&'a str], index: usize) -> Option<&'a str> {
+    lines
+        .iter()
+        .skip(index + 1)
+        .copied()
+        .find(|line| !line.trim().is_empty())
+}
+
+fn opens_closure_block(text: &str) -> bool {
+    text.ends_with('{') && text.contains('|')
+}
+
+fn split_line_comment(raw: &str) -> Option<(&str, &str)> {
+    let mut in_string = false;
+    let mut escaped = false;
+    for (index, character) in raw.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match character {
+            '\\' if in_string => escaped = true,
+            '"' => in_string = !in_string,
+            '/' if !in_string && raw[index..].starts_with("//") => {
+                return Some((&raw[..index], &raw[index..]));
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn trim_outer_blank_lines(mut lines: Vec<String>) -> Vec<String> {
+    while lines.first().is_some_and(|line| line.trim().is_empty()) {
+        lines.remove(0);
+    }
+    while lines.last().is_some_and(|line| line.trim().is_empty()) {
+        lines.pop();
+    }
+    lines
+}
+
+fn ruk_line_needs_semicolon(text: &str) -> bool {
+    let text = text.trim();
+    !text.is_empty()
+        && !text.starts_with("//")
+        && !text.starts_with('#')
+        && !text.ends_with(';')
+        && !text.ends_with(',')
+        && !text.ends_with('{')
+        && !text
+            .chars()
+            .all(|character| matches!(character, '}' | ',' | ';'))
+}
+
+fn looks_like_item_header_without_body(text: &str) -> bool {
+    is_struct_item(text)
+        || is_enum_item(text)
+        || is_trait_item(text)
+        || is_impl_or_mod_item(text)
+        || is_function(text)
+}
+
+fn looks_like_trait_item_without_body(text: &str) -> bool {
+    is_function(text) || text.starts_with("type ") || text.starts_with("const ")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1939,6 +2314,49 @@ pub fn demo() -> String {
     }
 
     #[test]
+    fn converts_between_rust_ruk_and_rusk() {
+        let rust_source = r#"
+fn main() {
+    let user = User::new(1, "Ada".to_string());
+    println!("{}", user.display_name());
+}
+
+fn id(value: i32) -> i32 {
+    value
+}
+"#;
+
+        let ruk = rust_to_ruk(rust_source).unwrap();
+        assert_eq!(
+            ruk,
+            r#"fn main() {
+    let user = User::new(1, "Ada".to_string())
+    println!("{}", user.display_name())
+}
+
+fn id(value: i32) -> i32 {
+    value
+}
+"#
+        );
+        assert_eq!(
+            ruk_to_rust(&ruk).unwrap(),
+            ensure_trailing_newline(rust_source.trim_start())
+        );
+        assert!(ruk_to_rusk(&ruk).unwrap().contains("let user = User.new"));
+        assert!(
+            rusk_to_ruk("fn main() =\n    println!(\"hello\")\n")
+                .unwrap()
+                .contains("println!(\"hello\")")
+        );
+        assert!(
+            rust_to_ruk("fn discarded() -> i32 {\n    1;\n}\n")
+                .unwrap()
+                .contains("1;")
+        );
+    }
+
+    #[test]
     fn converts_rust_to_rusk() {
         let source = r#"
 #[derive(Debug, Clone)]
@@ -2094,7 +2512,11 @@ pub fn normalized_names(lines: Vec<String>) -> Vec<String> {
         let mut examples = fs::read_dir(&examples_dir)
             .unwrap()
             .map(|entry| entry.unwrap().path())
-            .filter(|path| path.extension().is_some_and(|extension| extension == "rsk"))
+            .filter(|path| {
+                path.extension()
+                    .and_then(|extension| extension.to_str())
+                    .is_some_and(|extension| matches!(extension, "rsk" | "rk"))
+            })
             .collect::<Vec<_>>();
         examples.sort();
         assert!(!examples.is_empty());
@@ -2105,9 +2527,20 @@ pub fn normalized_names(lines: Vec<String>) -> Vec<String> {
 
         for example in examples {
             let source = fs::read_to_string(&example).unwrap();
-            let output = transpile(&source).unwrap_or_else(|error| {
-                panic!("failed to transpile {}: {error}", example.display())
-            });
+            let rust = if example
+                .extension()
+                .is_some_and(|extension| extension == "rk")
+            {
+                ruk_to_rust(&source).unwrap_or_else(|error| {
+                    panic!("failed to transpile {}: {error}", example.display())
+                })
+            } else {
+                transpile(&source)
+                    .unwrap_or_else(|error| {
+                        panic!("failed to transpile {}: {error}", example.display())
+                    })
+                    .rust
+            };
             let rust_path = out_dir.join(format!(
                 "{}.rs",
                 example
@@ -2116,7 +2549,7 @@ pub fn normalized_names(lines: Vec<String>) -> Vec<String> {
                     .to_string_lossy()
                     .replace('-', "_")
             ));
-            fs::write(&rust_path, output.rust).unwrap();
+            fs::write(&rust_path, rust).unwrap();
 
             let status = Command::new("rustc")
                 .arg("--edition=2024")

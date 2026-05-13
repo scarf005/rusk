@@ -1,0 +1,19 @@
+macro_rules! make_message {
+    ($name:expr) => { format!("hello {}", $name) }
+}
+macro_rules! log_count {
+    ($values:expr) => { dbg!($values.len()) }
+}
+pub fn make_message(name: &str) -> String {
+    make_message!(name)
+}
+pub fn log_values(values: &[i32]) {
+    log_count!(values)
+}
+pub fn assert_non_empty(values: &[i32]) {
+    assert!(!values.is_empty())
+}
+pub fn main() {
+    println!("{}", make_message("Ada"))
+    assert_non_empty(&[1])
+}

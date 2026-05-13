@@ -1,0 +1,16 @@
+#[derive(Debug, Clone)]
+pub enum Token {
+    Ident(String),
+    Number(i64),
+    Eof,
+}
+pub fn describe(token: Token) -> &'static str {
+    match token {
+        Token::Ident(_) => "ident",
+        Token::Number(_) => "number",
+        Token::Eof => "eof",
+    }
+}
+pub fn main() {
+    println!("{}", describe(Token::Eof))
+}

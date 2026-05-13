@@ -1,0 +1,16 @@
+pub mod outer {
+    pub mod inner {
+        pub fn value() -> i32 {
+            42
+        }
+    }
+    pub fn doubled() -> i32 {
+        inner::value() * 2
+    }
+}
+pub fn read() -> i32 {
+    outer::doubled()
+}
+pub fn main() {
+    println!("{}", read())
+}

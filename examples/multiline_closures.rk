@@ -1,0 +1,22 @@
+pub fn normalized_names(lines: Vec<String>) -> Vec<String> {
+    lines
+        .into_iter()
+        .filter_map(|line| {
+            let trimmed = line.trim()
+            if trimmed.is_empty() { None } else { Some(trimmed.to_ascii_lowercase()) }
+        })
+        .collect::<Vec<String>>()
+}
+pub fn total_large_orders(orders: Vec<Vec<i32>>) -> i32 {
+    orders
+        .into_iter()
+        .map(|items| {
+            let subtotal = items.into_iter().sum::<i32>()
+            if subtotal >= 100 { subtotal } else { 0 }
+        })
+        .sum()
+}
+pub fn main() {
+    println!("{:?}", normalized_names(vec![" Ada ".to_string(), "".to_string()]))
+    println!("{}", total_large_orders(vec![vec![40, 60], vec![1, 2]]))
+}

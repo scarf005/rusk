@@ -1,0 +1,10 @@
+pub fn clone_twice<T>(value: T) -> (T, T) where T: Clone {
+    (value.clone(), value)
+}
+pub fn debug_len<T>(values: &[T]) -> usize where T: std::fmt::Debug {
+    values.len()
+}
+pub fn main() {
+    println!("{:?}", clone_twice("rusk".to_string()))
+    println!("{}", debug_len(&[1, 2, 3]))
+}

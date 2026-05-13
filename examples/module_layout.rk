@@ -1,0 +1,12 @@
+#![allow(dead_code)]
+pub mod math {
+    pub fn clamp(value: i32, min: i32, max: i32) -> i32 {
+        if value < min { min } else { if value > max { max } else { value } }
+    }
+}
+pub trait Render {
+    fn render(&self) -> String
+}
+pub fn main() {
+    println!("{}", math::clamp(5, 0, 10))
+}

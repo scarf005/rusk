@@ -1,0 +1,12 @@
+pub fn sum_pair(pair: (i32, i32)) -> i32 {
+    let (left, right) = pair
+    left + right
+}
+pub fn swap(pair: (String, usize)) -> (usize, String) {
+    let (name, count) = pair
+    (count, name)
+}
+pub fn main() {
+    println!("{}", sum_pair((1, 2)))
+    println!("{:?}", swap(("items".to_string(), 3)))
+}

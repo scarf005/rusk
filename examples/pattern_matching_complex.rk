@@ -1,0 +1,20 @@
+pub enum Message {
+    Move {
+        x: i32,
+        y: i32,
+    },
+    Write(String),
+    Resize(u32, u32),
+    Quit,
+}
+pub fn message_score(message: Message) -> i32 {
+    match message {
+        Message::Move { x, y } => x + y,
+        Message::Write(text) => text.len() as i32,
+        Message::Resize(width, height) => (width * height) as i32,
+        Message::Quit => 0,
+    }
+}
+pub fn main() {
+    println!("{}", message_score(Message::Move { x: 1, y: 2 }))
+}

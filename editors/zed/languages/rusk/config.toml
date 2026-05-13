@@ -1,6 +1,6 @@
 name = "Rusk"
 grammar = "rusk"
-path_suffixes = ["rsk"]
+path_suffixes = ["rsk", "rk"]
 line_comments = ["// "]
 tab_size = 4
 autoclose_before = ";:.,=}])"
