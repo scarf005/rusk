@@ -11,7 +11,12 @@ import {
   StreamLanguage,
   syntaxHighlighting,
 } from "@codemirror/language"
-import { defaultKeymap, history, historyKeymap } from "@codemirror/commands"
+import {
+  defaultKeymap,
+  history,
+  historyKeymap,
+  indentWithTab,
+} from "@codemirror/commands"
 import { json } from "@codemirror/lang-json"
 import { rust } from "@codemirror/lang-rust"
 
@@ -117,7 +122,7 @@ const extensions = ({
       color: "#ffffff",
     },
   }),
-  keymap.of([...defaultKeymap, ...historyKeymap]),
+  keymap.of([indentWithTab, ...defaultKeymap, ...historyKeymap]),
   EditorView.updateListener.of((update) => {
     const isExternalSync = update.transactions.some((transaction) =>
       transaction.annotation(Transaction.remote)
