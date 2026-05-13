@@ -1,0 +1,9 @@
+.git
+.github
+target
+web/node_modules
+web/dist
+web/src/wasm
+crates/rusk/target
+editors/zed/target
+**/*.tmp

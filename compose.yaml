@@ -1,0 +1,41 @@
+services:
+  rusk-web:
+    build:
+      context: .
+      dockerfile: Containerfile
+    image: localhost/rusk-web:latest
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      RUSK_WEB_ADDR: 0.0.0.0:8080
+      RUSK_WEB_DIST: /app/web/dist
+      RUSK_RUN_TIMEOUT_MS: "5000"
+      RUSK_REQUEST_TIMEOUT_MS: "10000"
+      RUSK_MAX_CONNECTIONS: "32"
+      RUSK_MAX_CONCURRENT_RUNS: "2"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=128m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 128
+    cpus: "1.0"
+    mem_limit: 512m
+    ulimits:
+      nofile: { soft: 256, hard: 256 }
+      nproc: { soft: 128, hard: 128 }
+    networks:
+      - rusk-web
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080; printf \"GET / HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n\" >&3; head -n 1 <&3 | grep -q \"200\"'"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+networks:
+  rusk-web:
+    internal: true

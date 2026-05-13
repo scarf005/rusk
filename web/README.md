@@ -15,3 +15,11 @@ deno task build
 ```
 
 The `wasmbuild` task emits inline browser-compatible bindings to `src/wasm/` before Vite starts or builds.
+
+## Self-host with Podman
+
+```sh
+podman compose up --build
+```
+
+The image build uses Deno to produce static files, then serves them with `rusk-web`; the runtime image contains `rustc` and `rusk`, but no Deno binary is needed.

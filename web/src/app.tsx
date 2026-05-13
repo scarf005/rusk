@@ -45,8 +45,14 @@ type RunResponse = {
   totalMs: number
 }
 
-const isDevServer =
-  (import.meta as ImportMeta & { env: { DEV: boolean } }).env.DEV
+const env = (import.meta as ImportMeta & {
+  env: { DEV: boolean; VITE_RUN_API?: string }
+}).env
+const canRunRust = env.DEV || env.VITE_RUN_API === "1"
+const BYTES_PER_KIB = 1024
+const RUN_SOURCE_LIMIT_KIB = 64
+const RUN_SOURCE_LIMIT_BYTES = RUN_SOURCE_LIMIT_KIB * BYTES_PER_KIB
+const RUN_SOURCE_LIMIT_LABEL = `${RUN_SOURCE_LIMIT_KIB} KiB`
 
 const sourcePanel = signal<SourcePanel>("rusk")
 const editSide = signal<EditSide>("source")
@@ -291,6 +297,14 @@ export function App() {
 
   const runRust = async () => {
     if (converted.value.error || runState.value === "running") return
+    if (
+      new TextEncoder().encode(converted.value.rust).length >
+        RUN_SOURCE_LIMIT_BYTES
+    ) {
+      runOutput.value =
+        `Rust source exceeds ${RUN_SOURCE_LIMIT_LABEL} run limit`
+      return
+    }
 
     runState.value = "running"
     runResult.value = null
@@ -423,7 +437,7 @@ export function App() {
             border="border-b-2 border-black"
             action={
               <div class="flex gap-2">
-                {isDevServer && outputMode.value === "rust" && (
+                {canRunRust && outputMode.value === "rust" && (
                   <button
                     type="button"
                     onClick={runRust}
