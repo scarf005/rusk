@@ -1,13 +1,20 @@
 import { Component, createRef, Ref } from "preact"
 import { EditorState, Extension, Transaction } from "@codemirror/state"
 import {
+  drawSelection,
+  dropCursor,
   EditorView,
   highlightSpecialChars,
   keymap,
   lineNumbers,
+  rectangularSelection,
 } from "@codemirror/view"
 import {
+  bracketMatching,
+  codeFolding,
   defaultHighlightStyle,
+  foldKeymap,
+  indentOnInput,
   StreamLanguage,
   syntaxHighlighting,
 } from "@codemirror/language"
@@ -17,14 +24,29 @@ import {
   historyKeymap,
   indentWithTab,
 } from "@codemirror/commands"
+import {
+  autocompletion,
+  closeBrackets,
+  closeBracketsKeymap,
+  completeAnyWord,
+} from "@codemirror/autocomplete"
 import { json } from "@codemirror/lang-json"
 import { rust } from "@codemirror/lang-rust"
+import {
+  highlightSelectionMatches,
+  search,
+  searchKeymap,
+} from "@codemirror/search"
 
 type CodeLanguage = "rusk" | "ruk" | "rust" | "json" | "text"
 
 type RuskState = { inString: boolean }
 
 const rusk = StreamLanguage.define<RuskState>({
+  name: "rusk",
+  languageData: {
+    commentTokens: { line: "//", block: { open: "/*", close: "*/" } },
+  },
   startState: () => ({ inString: false }),
   token: (stream, state) => {
     if (stream.sol()) stream.eatSpace()
@@ -94,6 +116,18 @@ const extensions = ({
   lineNumbers(),
   highlightSpecialChars(),
   history(),
+  drawSelection(),
+  dropCursor(),
+  indentOnInput(),
+  bracketMatching(),
+  codeFolding(),
+  search(),
+  highlightSelectionMatches(),
+  rectangularSelection(),
+  EditorState.allowMultipleSelections.of(true),
+  editable
+    ? [closeBrackets(), autocompletion({ override: [completeAnyWord] })]
+    : [],
   syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
   languageExtension(language),
   EditorState.readOnly.of(!editable),
@@ -122,7 +156,14 @@ const extensions = ({
       color: "#ffffff",
     },
   }),
-  keymap.of([indentWithTab, ...defaultKeymap, ...historyKeymap]),
+  keymap.of([
+    indentWithTab,
+    ...closeBracketsKeymap,
+    ...defaultKeymap,
+    ...searchKeymap,
+    ...historyKeymap,
+    ...foldKeymap,
+  ]),
   EditorView.updateListener.of((update) => {
     const isExternalSync = update.transactions.some((transaction) =>
       transaction.annotation(Transaction.remote)

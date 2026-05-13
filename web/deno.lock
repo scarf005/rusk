@@ -1,10 +1,12 @@
 {
   "version": "5",
   "specifiers": {
+    "npm:@codemirror/autocomplete@^6.18.7": "6.18.7",
     "npm:@codemirror/commands@^6.10.0": "6.10.3",
     "npm:@codemirror/lang-json@^6.0.2": "6.0.2",
     "npm:@codemirror/lang-rust@^6.0.2": "6.0.2",
     "npm:@codemirror/language@^6.11.3": "6.12.3",
+    "npm:@codemirror/search@^6.5.11": "6.5.11",
     "npm:@codemirror/state@^6.5.2": "6.6.0",
     "npm:@codemirror/view@^6.38.8": "6.41.0",
     "npm:@deno/vite-plugin@^1.0.5": "1.0.6_vite@7.3.2",
@@ -172,6 +174,15 @@
         "@babel/helper-validator-identifier"
       ]
     },
+    "@codemirror/autocomplete@6.18.7": {
+      "integrity": "sha512-8EzdeIoWPJDsMBwz3zdzwXnUpCzMiCyz5/A3FIPpriaclFCGDkAzK13sMcnsu5rowqiyeQN2Vs2TsOcoDPZirQ==",
+      "dependencies": [
+        "@codemirror/language",
+        "@codemirror/state",
+        "@codemirror/view",
+        "@lezer/common"
+      ]
+    },
     "@codemirror/commands@6.10.3": {
       "integrity": "sha512-JFRiqhKu+bvSkDLI+rUhJwSxQxYb759W5GBezE8Uc8mHLqC9aV/9aTC7yJSqCtB3F00pylrLCwnyS91Ap5ej4Q==",
       "dependencies": [
@@ -204,6 +215,14 @@
         "@lezer/highlight",
         "@lezer/lr",
         "style-mod"
+      ]
+    },
+    "@codemirror/search@6.5.11": {
+      "integrity": "sha512-KmWepDE6jUdL6n8cAAqIpRmLPBZ5ZKnicE8oGU/s3QrAVID+0VhLFrzUucVKHG5035/BSykhExDL/Xm7dHthiA==",
+      "dependencies": [
+        "@codemirror/state",
+        "@codemirror/view",
+        "crelt"
       ]
     },
     "@codemirror/state@6.6.0": {
@@ -1144,10 +1163,12 @@
   },
   "workspace": {
     "dependencies": [
+      "npm:@codemirror/autocomplete@^6.18.7",
       "npm:@codemirror/commands@^6.10.0",
       "npm:@codemirror/lang-json@^6.0.2",
       "npm:@codemirror/lang-rust@^6.0.2",
       "npm:@codemirror/language@^6.11.3",
+      "npm:@codemirror/search@^6.5.11",
       "npm:@codemirror/state@^6.5.2",
       "npm:@codemirror/view@^6.38.8",
       "npm:@deno/vite-plugin@^1.0.5",

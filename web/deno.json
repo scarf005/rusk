@@ -25,10 +25,12 @@
     "jsxImportSource": "preact"
   },
   "imports": {
+    "@codemirror/autocomplete": "npm:@codemirror/autocomplete@^6.18.7",
     "@codemirror/commands": "npm:@codemirror/commands@^6.10.0",
     "@codemirror/lang-json": "npm:@codemirror/lang-json@^6.0.2",
     "@codemirror/lang-rust": "npm:@codemirror/lang-rust@^6.0.2",
     "@codemirror/language": "npm:@codemirror/language@^6.11.3",
+    "@codemirror/search": "npm:@codemirror/search@^6.5.11",
     "@codemirror/state": "npm:@codemirror/state@^6.5.2",
     "@codemirror/view": "npm:@codemirror/view@^6.38.8",
     "@deno/vite-plugin": "npm:@deno/vite-plugin@^1.0.5",
