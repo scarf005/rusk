@@ -2415,6 +2415,94 @@ fn main() {
     }
 
     #[test]
+    fn ruk_newline_semicolon_cases_compile() {
+        use std::{env, fs, process::Command};
+
+        let source = r#"
+struct User {
+    name: String,
+}
+
+impl User {
+    fn display_name(&self) -> &str {
+        &self.name
+    }
+}
+
+fn unit_multiline_macro(user: &User) {
+    println!(
+        "{}", user.display_name()
+    )
+    println!(
+        // comments must not close the pending call
+        "{}", user.display_name()
+    )
+}
+
+fn tail_multiline_call(user: &User) -> String {
+    format!(
+        "{}", user.display_name()
+    )
+}
+
+fn let_multiline_vector() -> Vec<i32> {
+    let values = vec![
+        1,
+        2
+    ]
+    values
+}
+
+fn multiline_chain_arguments(values: Vec<String>) -> Vec<String> {
+    values
+        .into_iter()
+        .map(|line| {
+            let trimmed = line.trim()
+            if trimmed.is_empty() { String::new() } else { trimmed.to_string() }
+        })
+        .filter(
+            |value| !value.is_empty()
+        )
+        .collect::<Vec<String>>()
+}
+
+fn non_tail_multiline_call(user: &User) -> String {
+    tail_multiline_call(
+        user
+    )
+    tail_multiline_call(user)
+}
+"#;
+
+        let rust = ruk_to_rust(source).unwrap();
+        assert!(rust.contains("    println!(\n        \"{}\", user.display_name()\n    );\n"));
+        assert!(rust.contains("fn tail_multiline_call(user: &User) -> String {\n    format!(\n        \"{}\", user.display_name()\n    )\n}"));
+        assert!(rust.contains("    let values = vec![\n        1,\n        2\n    ];\n"));
+        assert!(rust.contains("            let trimmed = line.trim();\n"));
+        assert!(
+            rust.contains("        .filter(\n            |value| !value.is_empty()\n        )\n")
+        );
+        assert!(rust.contains("    tail_multiline_call(\n        user\n    );\n"));
+
+        let dir = env::temp_dir().join(format!("rusk-ruk-newline-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("lib.rs");
+        fs::write(&path, rust).unwrap();
+        let status = Command::new("rustc")
+            .arg("--edition=2024")
+            .arg("--crate-type=lib")
+            .arg("--emit=metadata")
+            .arg("-o")
+            .arg(dir.join("out.rmeta"))
+            .arg(&path)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn converts_rust_to_rusk() {
         let source = r#"
 #[derive(Debug, Clone)]
