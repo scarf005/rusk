@@ -319,6 +319,8 @@ impl<'a> RukSemicolonInferer<'a> {
     fn infer(mut self) -> Result<String, TranspileError> {
         let mut output = Vec::new();
         let mut delimiter_depth = 0usize;
+        let mut brace_depth = 0usize;
+        let mut delimiter_base_brace_depth = None::<usize>;
         for index in 0..self.lines.len() {
             let line_number = index + 1;
             let raw = self.lines[index].trim_end();
@@ -330,20 +332,22 @@ impl<'a> RukSemicolonInferer<'a> {
             }
             let text = raw.trim_start();
             let indent = raw_indent(raw);
-            let starts_inside_delimiter = delimiter_depth > 0;
             let next_delimiter_depth = delimiter_depth_after_line(delimiter_depth, text);
             let leaves_delimiter_open = next_delimiter_depth > 0;
+            let suppress_semicolon = leaves_delimiter_open
+                && delimiter_base_brace_depth.is_none_or(|base| brace_depth <= base);
             self.close_scopes_for_line(text, indent);
-            let converted = self.infer_line(
-                raw,
-                text,
-                index,
-                starts_inside_delimiter,
-                leaves_delimiter_open,
-            );
+            let converted = self.infer_line(raw, text, index, suppress_semicolon);
             output.push(converted);
             self.open_scope_from_line(text, indent);
+            let next_brace_depth = brace_depth_after_line(brace_depth, text);
+            if delimiter_depth == 0 && next_delimiter_depth > 0 {
+                delimiter_base_brace_depth = Some(brace_depth);
+            } else if next_delimiter_depth == 0 {
+                delimiter_base_brace_depth = None;
+            }
             delimiter_depth = next_delimiter_depth;
+            brace_depth = next_brace_depth;
         }
         Ok(ensure_trailing_newline(&output.join("\n")))
     }
@@ -361,15 +365,8 @@ impl<'a> RukSemicolonInferer<'a> {
         }
     }
 
-    fn infer_line(
-        &self,
-        raw: &str,
-        text: &str,
-        index: usize,
-        starts_inside_delimiter: bool,
-        leaves_delimiter_open: bool,
-    ) -> String {
-        if leaves_delimiter_open && !starts_inside_delimiter {
+    fn infer_line(&self, raw: &str, text: &str, index: usize, suppress_semicolon: bool) -> String {
+        if suppress_semicolon {
             return raw.to_string();
         }
         if !ruk_line_needs_semicolon(text) {
@@ -473,6 +470,12 @@ fn delimiter_depth_after_line(depth: usize, text: &str) -> usize {
         .saturating_add(count_unquoted(text, '['))
         .saturating_sub(count_unquoted(text, ')'))
         .saturating_sub(count_unquoted(text, ']'))
+}
+
+fn brace_depth_after_line(depth: usize, text: &str) -> usize {
+    depth
+        .saturating_add(count_unquoted(text, '{'))
+        .saturating_sub(count_unquoted(text, '}'))
 }
 
 fn count_unquoted(text: &str, needle: char) -> usize {
@@ -2391,6 +2394,9 @@ fn id(value: i32) -> i32 {
 fn main() {
     println!(
         "{}", user.display_name())
+    println!(
+        "{}", user.display_name()
+    )
 }
 "#;
 
@@ -2400,6 +2406,9 @@ fn main() {
 fn main() {
     println!(
         "{}", user.display_name());
+    println!(
+        "{}", user.display_name()
+    );
 }
 "#
         );

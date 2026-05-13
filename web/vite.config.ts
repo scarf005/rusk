@@ -5,7 +5,7 @@ import { join, resolve } from "node:path"
 import process from "node:process"
 import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
-import { defineConfig, Plugin } from "vite"
+import { defineConfig, Plugin, ViteDevServer } from "vite"
 import deno from "@deno/vite-plugin"
 import preact from "@preact/preset-vite"
 import tailwindcss from "@tailwindcss/vite"
@@ -29,8 +29,21 @@ interface RunResponse extends CommandResult {
 const RUN_TIMEOUT_MS = 5_000
 const MAX_BODY_BYTES = 1_000_000
 
+const WASMBUILD_ARGS = [
+  "run",
+  "-A",
+  "jsr:@deno/wasmbuild@0.19.3",
+  "-p",
+  "rusk",
+  "--out",
+  "web/src/wasm",
+  "--inline",
+  "--skip-opt",
+]
+
 const isExampleRoute = (url?: string) =>
-  url?.startsWith("/examples/") || url?.startsWith("/rust-examples/") || false
+  url?.startsWith("/examples/") || url?.startsWith("/ruk-examples/") ||
+  url?.startsWith("/rust-examples/") || false
 
 const exampleRouteFallback = (): Plugin => ({
   name: "example-route-fallback",
@@ -59,6 +72,52 @@ const exampleRouteFallback = (): Plugin => ({
     })
   },
 })
+
+const wasmAutoRebuild = (): Plugin => {
+  let running: Promise<void> | null = null
+  let pending = false
+
+  const rebuild = async (server: ViteDevServer) => {
+    if (running) {
+      pending = true
+      return
+    }
+
+    running = (async () => {
+      do {
+        pending = false
+        server.config.logger.info("rebuilding rusk wasm...")
+        const result = await runCommandWithTimeout(
+          "deno",
+          WASMBUILD_ARGS,
+          resolve(".."),
+          120_000,
+        )
+        if (result.status === 0 && !result.timedOut) {
+          server.ws.send({ type: "full-reload" })
+          continue
+        }
+        server.config.logger.error(result.stderr || "wasmbuild failed")
+      } while (pending)
+    })().finally(() => running = null)
+
+    await running
+  }
+
+  return {
+    name: "rusk-wasm-auto-rebuild",
+    apply: "serve",
+    configureServer: (server) => {
+      const sourceRoot = resolve("../crates/rusk/src")
+      server.watcher.add(`${sourceRoot}/**/*.rs`)
+      server.watcher.on("change", (path) => {
+        if (path.startsWith(sourceRoot) && path.endsWith(".rs")) {
+          void rebuild(server)
+        }
+      })
+    },
+  }
+}
 
 const localRunApi = (): Plugin => ({
   name: "local-run-api",
@@ -135,6 +194,14 @@ const runCommand = (
   args: string[],
   cwd: string,
 ): Promise<CommandResult> =>
+  runCommandWithTimeout(command, args, cwd, RUN_TIMEOUT_MS)
+
+const runCommandWithTimeout = (
+  command: string,
+  args: string[],
+  cwd: string,
+  timeoutMs: number,
+): Promise<CommandResult> =>
   new Promise((resolve) => {
     const started = performance.now()
     const child = spawn(command, args, { cwd })
@@ -144,7 +211,7 @@ const runCommand = (
     const timeout = setTimeout(() => {
       timedOut = true
       child.kill("SIGKILL")
-    }, RUN_TIMEOUT_MS)
+    }, timeoutMs)
 
     child.stdout.on("data", (chunk) => stdout += chunk)
     child.stderr.on("data", (chunk) => stderr += chunk)
@@ -196,6 +263,7 @@ export default defineConfig({
   appType: "spa",
   resolve: { dedupe: ["preact", "preact/hooks", "preact/jsx-runtime"] },
   plugins: [
+    wasmAutoRebuild(),
     localRunApi(),
     exampleRouteFallback(),
     deno(),
