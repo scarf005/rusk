@@ -318,6 +318,7 @@ impl<'a> RukSemicolonInferer<'a> {
 
     fn infer(mut self) -> Result<String, TranspileError> {
         let mut output = Vec::new();
+        let mut delimiter_depth = 0usize;
         for index in 0..self.lines.len() {
             let line_number = index + 1;
             let raw = self.lines[index].trim_end();
@@ -329,10 +330,20 @@ impl<'a> RukSemicolonInferer<'a> {
             }
             let text = raw.trim_start();
             let indent = raw_indent(raw);
+            let starts_inside_delimiter = delimiter_depth > 0;
+            let next_delimiter_depth = delimiter_depth_after_line(delimiter_depth, text);
+            let leaves_delimiter_open = next_delimiter_depth > 0;
             self.close_scopes_for_line(text, indent);
-            let converted = self.infer_line(raw, text, index);
+            let converted = self.infer_line(
+                raw,
+                text,
+                index,
+                starts_inside_delimiter,
+                leaves_delimiter_open,
+            );
             output.push(converted);
             self.open_scope_from_line(text, indent);
+            delimiter_depth = next_delimiter_depth;
         }
         Ok(ensure_trailing_newline(&output.join("\n")))
     }
@@ -350,7 +361,17 @@ impl<'a> RukSemicolonInferer<'a> {
         }
     }
 
-    fn infer_line(&self, raw: &str, text: &str, index: usize) -> String {
+    fn infer_line(
+        &self,
+        raw: &str,
+        text: &str,
+        index: usize,
+        starts_inside_delimiter: bool,
+        leaves_delimiter_open: bool,
+    ) -> String {
+        if leaves_delimiter_open && !starts_inside_delimiter {
+            return raw.to_string();
+        }
         if !ruk_line_needs_semicolon(text) {
             return raw.to_string();
         }
@@ -444,6 +465,14 @@ fn strip_rust_semicolon(raw: &str) -> String {
     code.strip_suffix(';')
         .map(|line| format!("{} {comment}", line.trim_end()))
         .unwrap_or_else(|| raw.to_string())
+}
+
+fn delimiter_depth_after_line(depth: usize, text: &str) -> usize {
+    depth
+        .saturating_add(count_unquoted(text, '('))
+        .saturating_add(count_unquoted(text, '['))
+        .saturating_sub(count_unquoted(text, ')'))
+        .saturating_sub(count_unquoted(text, ']'))
 }
 
 fn count_unquoted(text: &str, needle: char) -> usize {
@@ -2353,6 +2382,26 @@ fn id(value: i32) -> i32 {
             rust_to_ruk("fn discarded() -> i32 {\n    1;\n}\n")
                 .unwrap()
                 .contains("1;")
+        );
+    }
+
+    #[test]
+    fn ruk_keeps_multiline_call_open_until_closing_line() {
+        let source = r#"
+fn main() {
+    println!(
+        "{}", user.display_name())
+}
+"#;
+
+        assert_eq!(
+            ruk_to_rust(source).unwrap(),
+            r#"
+fn main() {
+    println!(
+        "{}", user.display_name());
+}
+"#
         );
     }
 
