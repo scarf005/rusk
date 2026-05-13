@@ -1,5 +1,5 @@
 import { Component, createRef, Ref } from "preact"
-import { EditorState, Extension } from "@codemirror/state"
+import { EditorState, Extension, Transaction } from "@codemirror/state"
 import {
   EditorView,
   highlightSpecialChars,
@@ -119,7 +119,12 @@ const extensions = ({
   }),
   keymap.of([...defaultKeymap, ...historyKeymap]),
   EditorView.updateListener.of((update) => {
-    if (update.docChanged) onChange?.(update.state.doc.toString())
+    const isExternalSync = update.transactions.some((transaction) =>
+      transaction.annotation(Transaction.remote)
+    )
+    if (update.docChanged && !isExternalSync) {
+      onChange?.(update.state.doc.toString())
+    }
   }),
 ]
 
@@ -204,6 +209,7 @@ class CodeMirror extends Component<CodeMirrorProps> {
     if (current === this.props.value) return
     this.view.dispatch({
       changes: { from: 0, to: current.length, insert: this.props.value },
+      annotations: Transaction.remote.of(true),
     })
   }
 
