@@ -1,10 +1,9 @@
 use std::{
     env, fs,
-    io::{Read, Write},
-    net::{TcpListener, TcpStream},
+    io::Read,
     path::{Component, Path, PathBuf},
     process::{Command, Stdio},
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::atomic::{AtomicU64, AtomicUsize, Ordering},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -12,35 +11,59 @@ use std::{
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 
+use axum::{
+    Json, Router,
+    body::{Body, Bytes},
+    extract::{DefaultBodyLimit, State},
+    http::{
+        HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri,
+        header::{CACHE_CONTROL, CONTENT_LENGTH, CONTENT_TYPE},
+    },
+    middleware::{self, Next},
+    response::{IntoResponse, Response},
+    routing::post,
+};
 use serde_json::{Value, json};
 
 const BYTES_PER_KIB: usize = 1024;
 const BYTES_PER_MIB: u64 = 1024 * 1024;
 const MAX_RUN_SOURCE_KIB: usize = 64;
+const MAX_OUTPUT_KIB: usize = 256;
 const JSON_BODY_SIZE_MULTIPLIER: usize = 2;
 const MAX_RUN_SOURCE_BYTES: usize = MAX_RUN_SOURCE_KIB * BYTES_PER_KIB;
+const MAX_OUTPUT_BYTES: usize = MAX_OUTPUT_KIB * BYTES_PER_KIB;
 const MAX_BODY_BYTES: usize = MAX_RUN_SOURCE_BYTES * JSON_BODY_SIZE_MULTIPLIER;
 const DEFAULT_ADDR: &str = "0.0.0.0:8080";
 const DEFAULT_DIST: &str = "/app/web/dist";
 const DEFAULT_TIMEOUT_MS: u64 = 5_000;
 const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 10_000;
-const DEFAULT_MAX_CONNECTIONS: usize = 64;
+const DEFAULT_MAX_REQUESTS: usize = 64;
 const DEFAULT_MAX_CONCURRENT_RUNS: usize = 2;
-const CONNECTION_THREAD_STACK_KIB: usize = 512;
+const DEFAULT_RUN_RATE_LIMIT_PER_MINUTE: usize = 10;
+const RATE_LIMIT_WINDOW_MS: u64 = 60_000;
 const CHILD_FILE_SIZE_MIB: u64 = 64;
 const CHILD_OPEN_FILES: u64 = 64;
 const CHILD_PROCESSES: u64 = 64;
-const CONNECTION_THREAD_STACK_BYTES: usize = CONNECTION_THREAD_STACK_KIB * BYTES_PER_KIB;
 const CHILD_FILE_SIZE_BYTES: u64 = CHILD_FILE_SIZE_MIB * BYTES_PER_MIB;
 
-static ACTIVE_CONNECTIONS: AtomicUsize = AtomicUsize::new(0);
+static ACTIVE_REQUESTS: AtomicUsize = AtomicUsize::new(0);
 static ACTIVE_RUNS: AtomicUsize = AtomicUsize::new(0);
+static RUN_RATE_WINDOW_MS: AtomicU64 = AtomicU64::new(0);
+static RUN_RATE_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+#[derive(Clone, Debug)]
+struct AppState {
+    config: ServerConfig,
+    dist: PathBuf,
+}
 
 #[derive(Clone, Copy, Debug)]
 struct ServerConfig {
     request_timeout: Duration,
     run_timeout: Duration,
+    max_requests: usize,
     max_concurrent_runs: usize,
+    run_rate_limit_per_minute: usize,
 }
 
 #[derive(Debug)]
@@ -58,6 +81,8 @@ struct CommandResult {
     stdout: String,
     stderr: String,
     timed_out: bool,
+    stdout_truncated: bool,
+    stderr_truncated: bool,
     elapsed_ms: f64,
 }
 
@@ -71,54 +96,51 @@ struct RunResponse {
     total_ms: f64,
 }
 
-#[derive(Debug)]
-struct HttpRequest {
-    method: String,
-    path: String,
-    body: Vec<u8>,
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
+    let addr = env::var("RUSK_WEB_ADDR").unwrap_or_else(|_| DEFAULT_ADDR.to_string());
+    let state = AppState {
+        config: ServerConfig {
+            request_timeout: Duration::from_millis(read_u64_env(
+                "RUSK_REQUEST_TIMEOUT_MS",
+                DEFAULT_REQUEST_TIMEOUT_MS,
+            )),
+            run_timeout: Duration::from_millis(read_u64_env(
+                "RUSK_RUN_TIMEOUT_MS",
+                DEFAULT_TIMEOUT_MS,
+            )),
+            max_requests: read_usize_env("RUSK_MAX_REQUESTS", DEFAULT_MAX_REQUESTS),
+            max_concurrent_runs: read_usize_env(
+                "RUSK_MAX_CONCURRENT_RUNS",
+                DEFAULT_MAX_CONCURRENT_RUNS,
+            ),
+            run_rate_limit_per_minute: read_usize_env(
+                "RUSK_RUN_RATE_LIMIT_PER_MINUTE",
+                DEFAULT_RUN_RATE_LIMIT_PER_MINUTE,
+            ),
+        },
+        dist: PathBuf::from(env::var("RUSK_WEB_DIST").unwrap_or_else(|_| DEFAULT_DIST.to_string())),
+    };
+    let app = Router::new()
+        .route("/api/run", post(handle_run_request))
+        .fallback(handle_static_request)
+        .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            limit_active_requests,
+        ))
+        .layer(middleware::map_response(add_security_headers))
+        .with_state(state);
+    let listener = tokio::net::TcpListener::bind(&addr).await?;
+    eprintln!("rusk-web listening on http://{addr}");
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+        .map_err(std::io::Error::other)
 }
 
-fn main() -> std::io::Result<()> {
-    let addr = env::var("RUSK_WEB_ADDR").unwrap_or_else(|_| DEFAULT_ADDR.to_string());
-    let dist =
-        PathBuf::from(env::var("RUSK_WEB_DIST").unwrap_or_else(|_| DEFAULT_DIST.to_string()));
-    let config = ServerConfig {
-        request_timeout: Duration::from_millis(read_u64_env(
-            "RUSK_REQUEST_TIMEOUT_MS",
-            DEFAULT_REQUEST_TIMEOUT_MS,
-        )),
-        run_timeout: Duration::from_millis(read_u64_env("RUSK_RUN_TIMEOUT_MS", DEFAULT_TIMEOUT_MS)),
-        max_concurrent_runs: read_usize_env(
-            "RUSK_MAX_CONCURRENT_RUNS",
-            DEFAULT_MAX_CONCURRENT_RUNS,
-        ),
-    };
-    let max_connections = read_usize_env("RUSK_MAX_CONNECTIONS", DEFAULT_MAX_CONNECTIONS);
-    let listener = TcpListener::bind(&addr)?;
-    eprintln!("rusk-web listening on http://{addr}");
-
-    for stream in listener.incoming() {
-        let Ok(mut stream) = stream else {
-            continue;
-        };
-        let Some(permit) = try_acquire(&ACTIVE_CONNECTIONS, max_connections) else {
-            let _ = stream.write_all(&json_response(
-                503,
-                json!({ "error": "too many connections" }),
-            ));
-            continue;
-        };
-        let dist = dist.clone();
-        let _ = thread::Builder::new()
-            .name("rusk-web-conn".to_string())
-            .stack_size(CONNECTION_THREAD_STACK_BYTES)
-            .spawn(move || {
-                let _permit = permit;
-                handle_connection(stream, &dist, config);
-            });
-    }
-
-    Ok(())
+async fn shutdown_signal() {
+    let _ = tokio::signal::ctrl_c().await;
 }
 
 fn read_u64_env(name: &str, default: u64) -> u64 {
@@ -152,109 +174,100 @@ fn try_acquire(counter: &'static AtomicUsize, max: usize) -> Option<CounterPermi
     }
 }
 
-fn handle_connection(mut stream: TcpStream, dist: &Path, config: ServerConfig) {
-    let _ = stream.set_read_timeout(Some(config.request_timeout));
-    let _ = stream.set_write_timeout(Some(config.request_timeout));
-    let response = match read_request(&mut stream) {
-        Ok(request) if request.method == "POST" && request.path == "/api/run" => {
-            handle_run_request(&request.body, config)
-        }
-        Ok(request) if request.method == "GET" || request.method == "HEAD" => {
-            serve_static(dist, &request.path, request.method == "HEAD")
-        }
-        Ok(_) => http_response(
-            405,
-            "application/json",
-            br#"{"error":"method not allowed"}"#,
-            false,
-        ),
-        Err(error) => http_response(
-            400,
-            "application/json",
-            json!({ "error": error }).to_string().as_bytes(),
-            false,
-        ),
+async fn limit_active_requests(
+    State(state): State<AppState>,
+    request: axum::extract::Request,
+    next: Next,
+) -> Response {
+    let Some(_permit) = try_acquire(&ACTIVE_REQUESTS, state.config.max_requests) else {
+        return json_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            json!({ "error": "too many requests" }),
+        );
     };
-    let _ = stream.write_all(&response);
+    tokio::time::timeout(state.config.request_timeout, next.run(request))
+        .await
+        .unwrap_or_else(|_| {
+            json_response(
+                StatusCode::REQUEST_TIMEOUT,
+                json!({ "error": "request timed out" }),
+            )
+        })
 }
 
-fn read_request(stream: &mut TcpStream) -> Result<HttpRequest, String> {
-    let mut buffer = Vec::new();
-    let mut chunk = [0u8; 4096];
-    let header_end = loop {
-        let read = stream.read(&mut chunk).map_err(|error| error.to_string())?;
-        if read == 0 {
-            return Err("empty request".to_string());
-        }
-        buffer.extend_from_slice(&chunk[..read]);
-        if buffer.len() > MAX_BODY_BYTES {
-            return Err("request too large".to_string());
-        }
-        if let Some(index) = find_header_end(&buffer) {
-            break index;
-        }
-    };
-
-    let header = String::from_utf8_lossy(&buffer[..header_end]);
-    let mut lines = header.lines();
-    let request_line = lines
-        .next()
-        .ok_or_else(|| "missing request line".to_string())?;
-    let mut parts = request_line.split_whitespace();
-    let method = parts
-        .next()
-        .ok_or_else(|| "missing method".to_string())?
-        .to_string();
-    let raw_path = parts.next().ok_or_else(|| "missing path".to_string())?;
-    let path = raw_path.split('?').next().unwrap_or(raw_path).to_string();
-    let content_length = lines
-        .filter_map(|line| line.split_once(':'))
-        .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
-        .and_then(|(_, value)| value.trim().parse::<usize>().ok())
-        .unwrap_or(0);
-    if content_length > MAX_BODY_BYTES {
-        return Err("request body too large".to_string());
+async fn handle_run_request(State(state): State<AppState>, body: Bytes) -> Response {
+    if !try_run_rate_limit(state.config.run_rate_limit_per_minute) {
+        return json_response(
+            StatusCode::TOO_MANY_REQUESTS,
+            json!({ "error": "run rate limit exceeded" }),
+        );
     }
-
-    let body_start = header_end + 4;
-    let mut body = buffer[body_start..].to_vec();
-    while body.len() < content_length {
-        let read = stream.read(&mut chunk).map_err(|error| error.to_string())?;
-        if read == 0 {
-            break;
-        }
-        body.extend_from_slice(&chunk[..read]);
-    }
-    body.truncate(content_length);
-
-    Ok(HttpRequest { method, path, body })
-}
-
-fn find_header_end(buffer: &[u8]) -> Option<usize> {
-    buffer.windows(4).position(|window| window == b"\r\n\r\n")
-}
-
-fn handle_run_request(body: &[u8], config: ServerConfig) -> Vec<u8> {
-    let Some(_permit) = try_acquire(&ACTIVE_RUNS, config.max_concurrent_runs) else {
-        return json_response(503, json!({ "error": "too many active runs" }));
+    let Some(_permit) = try_acquire(&ACTIVE_RUNS, state.config.max_concurrent_runs) else {
+        return json_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            json!({ "error": "too many active runs" }),
+        );
     };
-    let Ok(value) = serde_json::from_slice::<Value>(body) else {
-        return json_response(400, json!({ "error": "invalid json" }));
+    let Ok(value) = serde_json::from_slice::<Value>(&body) else {
+        return json_response(StatusCode::BAD_REQUEST, json!({ "error": "invalid json" }));
     };
     let Some(rust) = value.get("rust").and_then(Value::as_str) else {
-        return json_response(400, json!({ "error": "rust must be a string" }));
+        return json_response(
+            StatusCode::BAD_REQUEST,
+            json!({ "error": "rust must be a string" }),
+        );
     };
     if rust.len() > MAX_RUN_SOURCE_BYTES {
         return json_response(
-            413,
+            StatusCode::PAYLOAD_TOO_LARGE,
             json!({ "error": format!("rust source exceeds {MAX_RUN_SOURCE_KIB} KiB run limit") }),
         );
     }
 
-    match compile_and_run_rust(rust, config.run_timeout) {
-        Ok(response) => json_response(200, run_response_json(response)),
-        Err(error) => json_response(500, json!({ "error": error.to_string() })),
+    let rust = rust.to_string();
+    let timeout = state.config.run_timeout;
+    match tokio::task::spawn_blocking(move || compile_and_run_rust(&rust, timeout)).await {
+        Ok(Ok(response)) => json_response(StatusCode::OK, run_response_json(response)),
+        Ok(Err(error)) => json_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({ "error": error.to_string() }),
+        ),
+        Err(error) => json_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({ "error": error.to_string() }),
+        ),
     }
+}
+
+fn try_run_rate_limit(max: usize) -> bool {
+    let now = now_millis();
+    loop {
+        let window_started = RUN_RATE_WINDOW_MS.load(Ordering::Acquire);
+        if now.saturating_sub(window_started) < RATE_LIMIT_WINDOW_MS {
+            break;
+        }
+        if RUN_RATE_WINDOW_MS
+            .compare_exchange(window_started, now, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            RUN_RATE_COUNT.store(0, Ordering::Release);
+            break;
+        }
+    }
+    let previous = RUN_RATE_COUNT.fetch_add(1, Ordering::AcqRel);
+    if previous < max {
+        true
+    } else {
+        RUN_RATE_COUNT.fetch_sub(1, Ordering::AcqRel);
+        false
+    }
+}
+
+fn now_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or_default()
 }
 
 fn compile_and_run_rust(rust: &str, timeout: Duration) -> std::io::Result<RunResponse> {
@@ -316,21 +329,41 @@ fn temp_run_dir() -> PathBuf {
 
 fn run_command(command: &str, args: &[&str], cwd: &Path, timeout: Duration) -> CommandResult {
     let started = Instant::now();
+    let stdout_path = temp_output_path(cwd, "stdout");
+    let stderr_path = temp_output_path(cwd, "stderr");
+    let stdout_file = fs::File::create(&stdout_path);
+    let stderr_file = fs::File::create(&stderr_path);
+    let (Ok(stdout_file), Ok(stderr_file)) = (stdout_file, stderr_file) else {
+        return CommandResult {
+            status: None,
+            stdout: String::new(),
+            stderr: "failed to create command output files".to_string(),
+            timed_out: false,
+            stdout_truncated: false,
+            stderr_truncated: false,
+            elapsed_ms: elapsed_ms(started),
+        };
+    };
+
     let mut command = Command::new(command);
     command
         .args(args)
         .current_dir(cwd)
         .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stdout(Stdio::from(stdout_file))
+        .stderr(Stdio::from(stderr_file));
     configure_child_process(&mut command, timeout);
     let child = command.spawn();
     let Ok(mut child) = child else {
+        let _ = fs::remove_file(stdout_path);
+        let _ = fs::remove_file(stderr_path);
         return CommandResult {
             status: None,
             stdout: String::new(),
             stderr: child.unwrap_err().to_string(),
             timed_out: false,
+            stdout_truncated: false,
+            stderr_truncated: false,
             elapsed_ms: elapsed_ms(started),
         };
     };
@@ -349,11 +382,15 @@ fn run_command(command: &str, args: &[&str], cwd: &Path, timeout: Duration) -> C
             Ok(None) => thread::sleep(Duration::from_millis(10)),
             Err(error) => {
                 kill_process_tree(child_pid);
+                let _ = fs::remove_file(stdout_path);
+                let _ = fs::remove_file(stderr_path);
                 return CommandResult {
                     status: None,
                     stdout: String::new(),
                     stderr: error.to_string(),
                     timed_out,
+                    stdout_truncated: false,
+                    stderr_truncated: false,
                     elapsed_ms: elapsed_ms(started),
                 };
             }
@@ -361,22 +398,56 @@ fn run_command(command: &str, args: &[&str], cwd: &Path, timeout: Duration) -> C
     }
 
     kill_process_tree(child_pid);
-    match child.wait_with_output() {
-        Ok(output) => CommandResult {
-            status: output.status.code(),
-            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+    let status = child.wait().map(|status| status.code());
+    let (stdout, stdout_truncated) = read_limited_utf8(&stdout_path, MAX_OUTPUT_BYTES);
+    let (mut stderr, stderr_truncated) = read_limited_utf8(&stderr_path, MAX_OUTPUT_BYTES);
+    let _ = fs::remove_file(stdout_path);
+    let _ = fs::remove_file(stderr_path);
+    match status {
+        Ok(status) => CommandResult {
+            status,
+            stdout,
+            stderr,
             timed_out,
+            stdout_truncated,
+            stderr_truncated,
             elapsed_ms: elapsed_ms(started),
         },
-        Err(error) => CommandResult {
-            status: None,
-            stdout: String::new(),
-            stderr: error.to_string(),
-            timed_out,
-            elapsed_ms: elapsed_ms(started),
-        },
+        Err(error) => {
+            if !stderr.is_empty() {
+                stderr.push('\n');
+            }
+            stderr.push_str(&error.to_string());
+            CommandResult {
+                status: None,
+                stdout,
+                stderr,
+                timed_out,
+                stdout_truncated,
+                stderr_truncated,
+                elapsed_ms: elapsed_ms(started),
+            }
+        }
     }
+}
+
+fn temp_output_path(cwd: &Path, name: &str) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    cwd.join(format!("{name}-{}-{nanos}.txt", std::process::id()))
+}
+
+fn read_limited_utf8(path: &Path, limit: usize) -> (String, bool) {
+    let Ok(mut file) = fs::File::open(path) else {
+        return (String::new(), false);
+    };
+    let mut buffer = vec![0; limit.saturating_add(1)];
+    let bytes_read = file.read(&mut buffer).unwrap_or_default();
+    let truncated = bytes_read > limit;
+    buffer.truncate(bytes_read.min(limit));
+    (String::from_utf8_lossy(&buffer).to_string(), truncated)
 }
 
 #[cfg(unix)]
@@ -385,6 +456,7 @@ fn configure_child_process(command: &mut Command, timeout: Duration) {
     unsafe {
         command.pre_exec(move || {
             create_child_process_group()?;
+            apply_child_sandbox();
             apply_child_limits(cpu_seconds)
         });
     }
@@ -400,6 +472,14 @@ fn create_child_process_group() -> std::io::Result<()> {
     } else {
         Err(std::io::Error::last_os_error())
     }
+}
+
+#[cfg(unix)]
+fn apply_child_sandbox() {
+    let _ = unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) };
+    let _ = unsafe { libc::unshare(libc::CLONE_NEWNET) };
+    let _ = unsafe { libc::unshare(libc::CLONE_NEWIPC) };
+    let _ = unsafe { libc::unshare(libc::CLONE_NEWUTS) };
 }
 
 #[cfg(unix)]
@@ -449,13 +529,29 @@ fn run_response_json(response: RunResponse) -> Value {
         "stdout": response.result.stdout,
         "stderr": response.result.stderr,
         "timedOut": response.result.timed_out,
+        "stdoutTruncated": response.result.stdout_truncated,
+        "stderrTruncated": response.result.stderr_truncated,
         "compileMs": response.compile_ms,
         "runMs": response.run_ms,
         "totalMs": response.total_ms,
     })
 }
 
-fn serve_static(dist: &Path, path: &str, head_only: bool) -> Vec<u8> {
+async fn handle_static_request(
+    State(state): State<AppState>,
+    method: Method,
+    uri: Uri,
+) -> Response {
+    if method != Method::GET && method != Method::HEAD {
+        return json_response(
+            StatusCode::METHOD_NOT_ALLOWED,
+            json!({ "error": "method not allowed" }),
+        );
+    }
+    serve_static(&state.dist, uri.path(), method == Method::HEAD)
+}
+
+fn serve_static(dist: &Path, path: &str, head_only: bool) -> Response {
     let relative = route_path(path);
     let file = safe_join(dist, &relative)
         .filter(|path| path.is_file())
@@ -467,11 +563,14 @@ fn serve_static(dist: &Path, path: &str, head_only: bool) -> Vec<u8> {
             }
         });
     let Some(file) = file else {
-        return http_response(404, "text/plain; charset=utf-8", b"not found", head_only);
+        return text_response(StatusCode::NOT_FOUND, "not found", head_only);
     };
     match fs::read(&file) {
-        Ok(body) => http_response(200, content_type(&file), &body, head_only),
-        Err(error) => json_response(500, json!({ "error": error.to_string() })),
+        Ok(body) => body_response(StatusCode::OK, content_type(&file), body, head_only),
+        Err(error) => json_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({ "error": error.to_string() }),
+        ),
     }
 }
 
@@ -516,35 +615,67 @@ fn content_type(path: &Path) -> &'static str {
     }
 }
 
-fn json_response(status: u16, value: Value) -> Vec<u8> {
-    http_response(
+fn json_response(status: StatusCode, value: Value) -> Response {
+    (status, Json(value)).into_response()
+}
+
+fn text_response(status: StatusCode, body: &'static str, head_only: bool) -> Response {
+    body_response(
         status,
-        "application/json",
-        value.to_string().as_bytes(),
-        false,
+        "text/plain; charset=utf-8",
+        body.as_bytes().to_vec(),
+        head_only,
     )
 }
 
-fn http_response(status: u16, content_type: &str, body: &[u8], head_only: bool) -> Vec<u8> {
-    let status_text = match status {
-        200 => "OK",
-        400 => "Bad Request",
-        404 => "Not Found",
-        405 => "Method Not Allowed",
-        413 => "Payload Too Large",
-        503 => "Service Unavailable",
-        500 => "Internal Server Error",
-        _ => "OK",
-    };
-    let headers = format!(
-        "HTTP/1.1 {status} {status_text}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-        body.len(),
+fn body_response(
+    status: StatusCode,
+    content_type: &'static str,
+    body: Vec<u8>,
+    head_only: bool,
+) -> Response {
+    Response::builder()
+        .status(status)
+        .header(CONTENT_TYPE, content_type)
+        .header(CONTENT_LENGTH, body.len().to_string())
+        .body(if head_only {
+            Body::empty()
+        } else {
+            Body::from(body)
+        })
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
+async fn add_security_headers(mut response: Response) -> Response {
+    let headers = response.headers_mut();
+    headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    insert_static_header(
+        headers,
+        "content-security-policy",
+        "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'",
     );
-    if head_only {
-        headers.into_bytes()
-    } else {
-        let mut response = headers.into_bytes();
-        response.extend_from_slice(body);
-        response
-    }
+    insert_static_header(headers, "cross-origin-embedder-policy", "require-corp");
+    insert_static_header(headers, "cross-origin-opener-policy", "same-origin");
+    insert_static_header(headers, "cross-origin-resource-policy", "same-origin");
+    insert_static_header(
+        headers,
+        "permissions-policy",
+        "camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), bluetooth=(), interest-cohort=()",
+    );
+    insert_static_header(headers, "referrer-policy", "no-referrer");
+    insert_static_header(
+        headers,
+        "strict-transport-security",
+        "max-age=31536000; includeSubDomains; preload",
+    );
+    insert_static_header(headers, "x-content-type-options", "nosniff");
+    insert_static_header(headers, "x-frame-options", "DENY");
+    response
+}
+
+fn insert_static_header(headers: &mut HeaderMap, name: &'static str, value: &'static str) {
+    headers.insert(
+        HeaderName::from_static(name),
+        HeaderValue::from_static(value),
+    );
 }

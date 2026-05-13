@@ -107,7 +107,7 @@ podman compose up --build
 # open http://localhost:8080
 ```
 
-The service binds to `127.0.0.1:8080` on the host for local use or a local Cloudflare Tunnel origin. The container runtime is read-only except for `/tmp`, where Rust snippets are compiled and run with `RUSK_RUN_TIMEOUT_MS`. Run requests are limited to 64 KiB of Rust source and two concurrent runs by default.
+The service binds to `127.0.0.1:8080` on the host for local use or a local Cloudflare Tunnel origin. The container runtime is read-only except for `/tmp`, where Rust snippets are compiled and run with `RUSK_RUN_TIMEOUT_MS`. Run requests are limited to 64 KiB of Rust source, 256 KiB of captured output, two concurrent runs, and ten runs per minute by default. If exposed through Cloudflare Tunnel, put Cloudflare Access and a `/api/run` rate limit in front of it.
 
 ## Language Server
 

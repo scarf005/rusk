@@ -40,6 +40,8 @@ type RunResponse = {
   stdout: string
   stderr: string
   timedOut: boolean
+  stdoutTruncated: boolean
+  stderrTruncated: boolean
   compileMs: number
   runMs: number
   totalMs: number
@@ -504,7 +506,10 @@ function formatMs(value: number): string {
 }
 
 function formatRunOutput(result: RunResponse): string {
-  const output = `${result.stdout}${result.stderr}`.trimEnd()
+  const truncated = result.stdoutTruncated || result.stderrTruncated
+    ? "\n\n[output truncated]"
+    : ""
+  const output = `${result.stdout}${result.stderr}${truncated}`.trimEnd()
   const status = result.timedOut
     ? `${result.stage} timed out`
     : `${result.stage} exit ${result.status ?? "unknown"}`
