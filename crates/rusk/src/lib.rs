@@ -713,6 +713,8 @@ fn classify_rust_block_header(header: &str, parent: Option<RustBlockKind>) -> Ru
         RustBlockKind::Match
     } else if matches!(parent, Some(RustBlockKind::Match)) && header.contains("=>") {
         RustBlockKind::MatchArm
+    } else if matches!(parent, Some(RustBlockKind::Enum)) {
+        RustBlockKind::StructLike
     } else if is_function(header) {
         RustBlockKind::Function
     } else if is_trait_item(header) || is_rust_impl_or_mod_item(header) || is_macro_item(header) {
@@ -1583,12 +1585,13 @@ fn emit_enum_member(node: &Node, emitter: &mut Emitter) {
 fn emit_trait_member(node: &Node, emitter: &mut Emitter) {
     let text = node.text.trim();
     let (block_text, _) = strip_block_marker(text);
-    if is_function(block_text) && (text.contains('=') || !node.children.is_empty()) {
+    let (signature, _) = strip_explicit_semicolon(block_text);
+    if is_function(signature) && (text.contains('=') || !node.children.is_empty()) {
         emit_function(node, emitter);
-    } else if is_function(block_text) {
+    } else if is_function(signature) {
         emitter.push(
             node,
-            format!("{}{};", spaces(node.indent), lower_signature(block_text)),
+            format!("{}{};", spaces(node.indent), lower_signature(signature)),
         );
     } else {
         emit_general(node, Context::Trait, true, emitter);
@@ -1632,10 +1635,16 @@ fn emit_macro_arm(node: &Node, emitter: &mut Emitter) {
     if let Some((pattern, expr)) = split_arrow(text) {
         let pattern = pattern.trim();
         let expr = expr.trim();
+        let (expr, _) = strip_explicit_semicolon(expr);
         if expr.is_empty() {
             emitter.push(node, format!("{}{} => {{", indent, pattern));
             emit_nodes(&node.children, Context::Block, emitter);
             emitter.push_generated(format!("{}}};", indent));
+        } else if expr.trim_start().starts_with('{') && expr.trim_end().ends_with('}') {
+            emitter.push(
+                node,
+                format!("{}{} => {};", indent, pattern, lower_expr(expr)),
+            );
         } else {
             emitter.push(
                 node,
