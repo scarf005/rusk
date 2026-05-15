@@ -63,7 +63,7 @@ just web # open web editor
 
 - `:`-marked indentation blocks for `struct`, `enum`, `trait`, `impl`, `mod`, `macro_rules!`, `fn`, `if`, `else`, `match`, loops, `unsafe`, and `async`
 - optional opening braces on `:`-marked indented blocks, plus Rust `{` blocks as an escape hatch
-- inline function expression bodies with `=`
+- single-expression function shorthand with `=`, e.g. `fn id(value: i32) -> i32 = value`
 - `if condition then expr else expr` expressions
 - Rust-style inline struct literals, e.g. `Self{ id, name }`
 - trailing `;` for explicit semicolon/discard statements when inference is not enough
