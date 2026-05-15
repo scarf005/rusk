@@ -146,10 +146,9 @@ struct Emitter {
 
 pub fn transpile(source: &str) -> Result<TranspileOutput, TranspileError> {
     let lines = source_lines(source)?;
-    parse_source_lines(&lines)?;
+    let nodes = parse_source_tree(&lines)?;
 
     let mut emitter = Emitter::default();
-    let (nodes, _) = parse_nodes(&lines, 0, 0)?;
     emit_nodes(&nodes, Context::Root, &mut emitter);
     Ok(TranspileOutput {
         rust: ensure_trailing_newline(&emitter.lines.join("\n")),
@@ -829,14 +828,19 @@ fn rust_inline_if_to_rusk(text: &str) -> Option<String> {
 }
 
 fn parse_source_lines(lines: &[SourceLine]) -> Result<(), TranspileError> {
-    let (_, index) = parse_nodes(lines, 0, 0)?;
+    parse_source_tree(lines).map(|_| ())
+}
+
+fn parse_source_tree(lines: &[SourceLine]) -> Result<Vec<Node>, TranspileError> {
+    let (nodes, index) = parse_nodes(lines, 0, 0)?;
     if index != lines.len() {
         return Err(TranspileError {
             line: lines[index].line,
             message: "unexpected indentation".to_string(),
         });
     }
-    Ok(())
+    validate_nodes(&nodes, Context::Root)?;
+    Ok(nodes)
 }
 
 pub fn source_map_json(output: &TranspileOutput) -> String {
@@ -981,6 +985,172 @@ fn parse_nodes(
         });
     }
     Ok((nodes, index))
+}
+
+fn validate_nodes(nodes: &[Node], context: Context) -> Result<(), TranspileError> {
+    nodes
+        .iter()
+        .try_for_each(|node| validate_node(node, context))
+}
+
+fn validate_node(node: &Node, context: Context) -> Result<(), TranspileError> {
+    let text = node.text.trim();
+    if text.starts_with("//") || lower_attribute(text).is_some() {
+        return reject_children(node, "attributes and comments cannot own indented blocks");
+    }
+
+    match context {
+        Context::Struct => validate_struct_member(node),
+        Context::Enum => validate_enum_member(node),
+        Context::Trait => validate_trait_member(node),
+        Context::Match => validate_match_arm(node),
+        Context::StructLiteral => validate_struct_literal_field(node),
+        Context::Macro => validate_macro_arm(node),
+        Context::Root | Context::Block => validate_general_node(node),
+    }
+}
+
+fn validate_general_node(node: &Node) -> Result<(), TranspileError> {
+    let text = node.text.trim();
+    let (text_without_semicolon, _) = strip_explicit_semicolon(text);
+    if is_struct_item(text) {
+        validate_nodes(&node.children, Context::Struct)
+    } else if is_enum_item(text) {
+        validate_nodes(&node.children, Context::Enum)
+    } else if is_trait_item(text) {
+        validate_nodes(&node.children, Context::Trait)
+    } else if is_macro_item(text) {
+        validate_nodes(&node.children, Context::Macro)
+    } else if is_function(text) {
+        validate_function_node(node)
+    } else if is_impl_or_mod_item(text) {
+        validate_nodes(&node.children, Context::Block)
+    } else if is_match(text_without_semicolon) {
+        validate_nodes(&node.children, Context::Match)
+    } else if is_control(text_without_semicolon) {
+        validate_nodes(&node.children, Context::Block)
+    } else if looks_like_struct_literal(node) {
+        validate_nodes(&node.children, Context::StructLiteral)
+    } else {
+        validate_statement_node(node)
+    }
+}
+
+fn validate_function_node(node: &Node) -> Result<(), TranspileError> {
+    let Some((_, body)) = split_once_top_level(node.text.trim(), '=') else {
+        return reject_children(node, "function blocks require `=` before an indented body");
+    };
+    let body = body.trim();
+    if body.is_empty() || node.children.is_empty() {
+        return validate_nodes(&node.children, Context::Block);
+    }
+    if are_continuations(&node.children) {
+        return validate_nodes(&node.children, Context::Block);
+    }
+    Err(TranspileError {
+        line: node.line,
+        message: "inline function bodies cannot own indented blocks; move the body below `=` or use method-chain continuations".to_string(),
+    })
+}
+
+fn validate_statement_node(node: &Node) -> Result<(), TranspileError> {
+    if node.children.is_empty() {
+        return Ok(());
+    }
+
+    let (text, _) = strip_explicit_semicolon(node.text.trim());
+    if are_continuations(&node.children) {
+        validate_nodes(&node.children, Context::Block)
+    } else if is_multiline_closure_head(text) {
+        validate_nodes(&node.children, Context::Block)
+    } else if let Some((_, rhs)) = split_once_top_level(text, '=')
+        && is_multiline_closure_head(rhs.trim())
+    {
+        validate_nodes(&node.children, Context::Block)
+    } else if is_raw_braced_expr_head(text) {
+        validate_nodes(&node.children, Context::Block)
+    } else if looks_like_struct_literal(node) {
+        validate_nodes(&node.children, Context::StructLiteral)
+    } else {
+        Err(TranspileError {
+            line: node.line,
+            message: "unsupported indented block after this expression".to_string(),
+        })
+    }
+}
+
+fn validate_struct_member(node: &Node) -> Result<(), TranspileError> {
+    let text = node.text.trim();
+    if is_function(text) || is_impl_or_mod_item(text) {
+        validate_general_node(node)
+    } else {
+        reject_children(node, "struct fields cannot own indented blocks")
+    }
+}
+
+fn validate_enum_member(node: &Node) -> Result<(), TranspileError> {
+    validate_nodes(&node.children, Context::Struct)
+}
+
+fn validate_trait_member(node: &Node) -> Result<(), TranspileError> {
+    let text = node.text.trim();
+    if is_function(text) {
+        validate_function_node(node)
+    } else {
+        reject_children(
+            node,
+            "trait items without bodies cannot own indented blocks",
+        )
+    }
+}
+
+fn validate_match_arm(node: &Node) -> Result<(), TranspileError> {
+    if let Some((_, expr)) = split_arrow(node.text.trim()) {
+        if expr.trim().is_empty() {
+            validate_nodes(&node.children, Context::Block)
+        } else if node.children.is_empty() {
+            Ok(())
+        } else {
+            Err(TranspileError {
+                line: node.line,
+                message: "match arms with inline bodies cannot own indented blocks".to_string(),
+            })
+        }
+    } else {
+        validate_nodes(&node.children, Context::Block)
+    }
+}
+
+fn validate_macro_arm(node: &Node) -> Result<(), TranspileError> {
+    if let Some((_, expr)) = split_arrow(node.text.trim()) {
+        if expr.trim().is_empty() {
+            validate_nodes(&node.children, Context::Block)
+        } else if node.children.is_empty() {
+            Ok(())
+        } else {
+            Err(TranspileError {
+                line: node.line,
+                message: "macro arms with inline bodies cannot own indented blocks".to_string(),
+            })
+        }
+    } else {
+        reject_children(node, "macro arms without `=>` cannot own indented blocks")
+    }
+}
+
+fn validate_struct_literal_field(node: &Node) -> Result<(), TranspileError> {
+    reject_children(node, "struct literal fields cannot own indented blocks")
+}
+
+fn reject_children(node: &Node, message: &str) -> Result<(), TranspileError> {
+    if node.children.is_empty() {
+        Ok(())
+    } else {
+        Err(TranspileError {
+            line: node.line,
+            message: message.to_string(),
+        })
+    }
 }
 
 fn emit_nodes(nodes: &[Node], context: Context, emitter: &mut Emitter) {
@@ -2549,6 +2719,14 @@ pub fn main() =
     }
 
     #[test]
+    fn preserves_inline_rust_blocks_during_rust_to_rusk() {
+        assert_eq!(
+            rust_to_rusk("fn main() { println!(\"hi\"); }\n").unwrap(),
+            "fn main() { println!(\"hi\"); }\n"
+        );
+    }
+
+    #[test]
     fn converts_rust_tail_discard_semicolons() {
         let source = r#"
 fn bump(value: i32) -> i32 {
@@ -2712,6 +2890,49 @@ pub fn normalized_names(lines: Vec<String>) -> Vec<String> {
         }
 
         let _ = fs::remove_dir_all(&out_dir);
+    }
+
+    #[test]
+    fn rejects_unsupported_indented_expression_blocks() {
+        let error =
+            transpile("fn main() =\n    println!(\"first\")\n        println!(\"nested\")\n")
+                .unwrap_err();
+        assert_eq!(error.line, 2);
+        assert_eq!(
+            error.message,
+            "unsupported indented block after this expression"
+        );
+    }
+
+    #[test]
+    fn rejects_inline_function_body_with_unsupported_children() {
+        let error = transpile("fn id(value: i32) -> i32 = value\n    + 1\n").unwrap_err();
+        assert_eq!(error.line, 1);
+        assert_eq!(
+            error.message,
+            "inline function bodies cannot own indented blocks; move the body below `=` or use method-chain continuations"
+        );
+    }
+
+    #[test]
+    fn rejects_inline_match_arm_with_children() {
+        let error = transpile("fn id(value: i32) -> i32 =\n    match value\n        0 => 1\n            println!(\"ignored\")\n        _ => value\n")
+            .unwrap_err();
+        assert_eq!(error.line, 3);
+        assert_eq!(
+            error.message,
+            "match arms with inline bodies cannot own indented blocks"
+        );
+    }
+
+    #[test]
+    fn format_rejects_unsupported_blocks() {
+        let error = format_source(
+            "fn main() =\n    println!(\"first\")\n        println!(\"nested\")\n",
+            FormatOptions::default(),
+        )
+        .unwrap_err();
+        assert_eq!(error.line, 2);
     }
 
     #[test]
