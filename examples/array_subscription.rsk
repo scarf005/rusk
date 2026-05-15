@@ -1,4 +1,4 @@
-pub fn pick(xs: &[i32], index: usize) -> i32 =
+pub fn pick(xs: &[i32], index: usize) -> i32:
     let values = [10, 20, 30]
     let repeated = [index as i32; 3]
     let nested = [[1, 2], [3, 4]]
@@ -7,5 +7,5 @@ pub fn pick(xs: &[i32], index: usize) -> i32 =
     let matrix = nested[1][0]
     direct + literal + matrix + repeated[2]
 
-pub fn main() =
+pub fn main():
     println!("{}", pick(&[1, 2, 3], 1))

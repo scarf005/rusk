@@ -1,14 +1,14 @@
-pub struct Borrowed['a]
+pub struct Borrowed['a]:
     pub name: &'a str
 
-impl['a] Borrowed['a]
+impl['a] Borrowed['a]:
     pub fn new(name: &'a str) -> Self = Self{ name }
     pub fn name(&self) -> &'a str = self.name
 
-pub fn choose['a](left: &'a str, right: &'a str, use_left: bool) -> &'a str =
+pub fn choose['a](left: &'a str, right: &'a str, use_left: bool) -> &'a str:
     if use_left then left else right
 
-pub fn main() =
+pub fn main():
     let borrowed = Borrowed.new("Ada")
     println!("{}", borrowed.name())
     println!("{}", choose("left", "right", true))

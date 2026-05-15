@@ -662,12 +662,10 @@ fn convert_rust_statement(text: &str, parent: Option<RustBlockKind>) -> Converte
     if let Some(header) = text.strip_suffix('{') {
         let header = header.trim_end();
         let kind = classify_rust_block_header(header, parent);
-        let text = if kind == RustBlockKind::Function && is_function(header) {
-            format!("{} =", lower_rust_syntax(header))
-        } else if is_raw_rust_block_header(header, kind) {
+        let text = if is_raw_rust_block_header(header, kind) {
             format!("{} {{", lower_rust_syntax(header))
         } else {
-            lower_rust_syntax(header)
+            format!("{}:", lower_rust_syntax(header))
         };
         return ConvertedRustStatement {
             text,
@@ -1013,35 +1011,61 @@ fn validate_node(node: &Node, context: Context) -> Result<(), TranspileError> {
 fn validate_general_node(node: &Node) -> Result<(), TranspileError> {
     let text = node.text.trim();
     let (text_without_semicolon, _) = strip_explicit_semicolon(text);
-    if is_struct_item(text) {
+    let (block_text, _) = strip_block_marker(text_without_semicolon);
+    if is_struct_item(block_text) {
+        require_block_opener(node)?;
         validate_nodes(&node.children, Context::Struct)
-    } else if is_enum_item(text) {
+    } else if is_enum_item(block_text) {
+        require_block_opener(node)?;
         validate_nodes(&node.children, Context::Enum)
-    } else if is_trait_item(text) {
+    } else if is_trait_item(block_text) {
+        require_block_opener(node)?;
         validate_nodes(&node.children, Context::Trait)
-    } else if is_macro_item(text) {
+    } else if is_macro_item(block_text) {
+        require_block_opener(node)?;
         validate_nodes(&node.children, Context::Macro)
-    } else if is_function(text) {
+    } else if is_function(block_text) {
         validate_function_node(node)
-    } else if is_impl_or_mod_item(text) {
+    } else if is_impl_or_mod_item(block_text) {
+        require_block_opener(node)?;
         validate_nodes(&node.children, Context::Block)
-    } else if is_match(text_without_semicolon) {
+    } else if is_match(block_text) {
+        require_block_opener(node)?;
         validate_nodes(&node.children, Context::Match)
-    } else if is_control(text_without_semicolon) {
+    } else if is_control(block_text) {
+        require_block_opener(node)?;
         validate_nodes(&node.children, Context::Block)
     } else if looks_like_struct_literal(node) {
+        require_block_opener(node)?;
         validate_nodes(&node.children, Context::StructLiteral)
     } else {
         validate_statement_node(node)
     }
 }
 
+fn require_block_opener(node: &Node) -> Result<(), TranspileError> {
+    if node.children.is_empty() || has_explicit_block_opener(node.text.trim()) {
+        Ok(())
+    } else {
+        Err(TranspileError {
+            line: node.line,
+            message: "indented blocks require `:`".to_string(),
+        })
+    }
+}
+
 fn validate_function_node(node: &Node) -> Result<(), TranspileError> {
-    let Some((_, body)) = split_once_top_level(node.text.trim(), '=') else {
-        return reject_children(node, "function blocks require `=` before an indented body");
+    let (text, _) = strip_block_marker(node.text.trim());
+    let Some((_, body)) = split_once_top_level(text, '=') else {
+        require_block_opener(node)?;
+        return validate_nodes(&node.children, Context::Block);
     };
     let body = body.trim();
-    if body.is_empty() || node.children.is_empty() {
+    if node.children.is_empty() {
+        return Ok(());
+    }
+    if body.is_empty() {
+        require_block_opener(node)?;
         return validate_nodes(&node.children, Context::Block);
     }
     if are_continuations(&node.children) {
@@ -1049,7 +1073,7 @@ fn validate_function_node(node: &Node) -> Result<(), TranspileError> {
     }
     Err(TranspileError {
         line: node.line,
-        message: "inline function bodies cannot own indented blocks; move the body below `=` or use method-chain continuations".to_string(),
+        message: "inline function bodies cannot own indented blocks; move the body below `:` or use method-chain continuations".to_string(),
     })
 }
 
@@ -1059,6 +1083,7 @@ fn validate_statement_node(node: &Node) -> Result<(), TranspileError> {
     }
 
     let (text, _) = strip_explicit_semicolon(node.text.trim());
+    let (block_text, _) = strip_block_marker(text);
     if are_continuations(&node.children) {
         validate_nodes(&node.children, Context::Block)
     } else if is_multiline_closure_head(text) {
@@ -1070,17 +1095,23 @@ fn validate_statement_node(node: &Node) -> Result<(), TranspileError> {
     } else if is_raw_braced_expr_head(text) {
         validate_nodes(&node.children, Context::Block)
     } else if looks_like_struct_literal(node) {
+        require_block_opener(node)?;
         validate_nodes(&node.children, Context::StructLiteral)
+    } else if has_block_marker(text) {
+        Err(TranspileError {
+            line: node.line,
+            message: format!("unsupported indented block after `{block_text}`"),
+        })
     } else {
         Err(TranspileError {
             line: node.line,
-            message: "unsupported indented block after this expression".to_string(),
+            message: "indented blocks require `:`".to_string(),
         })
     }
 }
 
 fn validate_struct_member(node: &Node) -> Result<(), TranspileError> {
-    let text = node.text.trim();
+    let (text, _) = strip_block_marker(node.text.trim());
     if is_function(text) || is_impl_or_mod_item(text) {
         validate_general_node(node)
     } else {
@@ -1089,11 +1120,12 @@ fn validate_struct_member(node: &Node) -> Result<(), TranspileError> {
 }
 
 fn validate_enum_member(node: &Node) -> Result<(), TranspileError> {
+    require_block_opener(node)?;
     validate_nodes(&node.children, Context::Struct)
 }
 
 fn validate_trait_member(node: &Node) -> Result<(), TranspileError> {
-    let text = node.text.trim();
+    let (text, _) = strip_block_marker(node.text.trim());
     if is_function(text) {
         validate_function_node(node)
     } else {
@@ -1105,8 +1137,10 @@ fn validate_trait_member(node: &Node) -> Result<(), TranspileError> {
 }
 
 fn validate_match_arm(node: &Node) -> Result<(), TranspileError> {
-    if let Some((_, expr)) = split_arrow(node.text.trim()) {
+    let (text, _) = strip_block_marker(node.text.trim());
+    if let Some((_, expr)) = split_arrow(text) {
         if expr.trim().is_empty() {
+            require_block_opener(node)?;
             validate_nodes(&node.children, Context::Block)
         } else if node.children.is_empty() {
             Ok(())
@@ -1117,13 +1151,16 @@ fn validate_match_arm(node: &Node) -> Result<(), TranspileError> {
             })
         }
     } else {
+        require_block_opener(node)?;
         validate_nodes(&node.children, Context::Block)
     }
 }
 
 fn validate_macro_arm(node: &Node) -> Result<(), TranspileError> {
-    if let Some((_, expr)) = split_arrow(node.text.trim()) {
+    let (text, _) = strip_block_marker(node.text.trim());
+    if let Some((_, expr)) = split_arrow(text) {
         if expr.trim().is_empty() {
+            require_block_opener(node)?;
             validate_nodes(&node.children, Context::Block)
         } else if node.children.is_empty() {
             Ok(())
@@ -1252,40 +1289,63 @@ fn strip_explicit_semicolon(text: &str) -> (&str, bool) {
         .unwrap_or((text, false))
 }
 
+fn strip_block_marker(text: &str) -> (&str, bool) {
+    let text = text.trim_end();
+    text.strip_suffix(':')
+        .map(|stripped| (stripped.trim_end(), true))
+        .unwrap_or((text, false))
+}
+
+fn has_block_marker(text: &str) -> bool {
+    strip_block_marker(text).1
+}
+
+fn has_explicit_block_opener(text: &str) -> bool {
+    let (text, _) = strip_explicit_semicolon(text);
+    has_block_marker(text) || text.trim_end().ends_with('{')
+}
+
 fn emit_general(node: &Node, context: Context, is_last: bool, emitter: &mut Emitter) {
     let text = node.text.trim();
-    if is_struct_item(text) {
-        emit_braced_item(node, Context::Struct, emitter, lower_signature(text));
-    } else if is_enum_item(text) {
-        emit_braced_item(node, Context::Enum, emitter, lower_signature(text));
-    } else if is_trait_item(text) {
-        emit_braced_item(node, Context::Trait, emitter, lower_signature(text));
-    } else if is_macro_item(text) {
-        emit_braced_item(node, Context::Macro, emitter, lower_signature(text));
-    } else if is_function(text) {
+    let (block_text, _) = strip_block_marker(text);
+    if is_struct_item(block_text) {
+        emit_braced_item(node, Context::Struct, emitter, lower_signature(block_text));
+    } else if is_enum_item(block_text) {
+        emit_braced_item(node, Context::Enum, emitter, lower_signature(block_text));
+    } else if is_trait_item(block_text) {
+        emit_braced_item(node, Context::Trait, emitter, lower_signature(block_text));
+    } else if is_macro_item(block_text) {
+        emit_braced_item(node, Context::Macro, emitter, lower_signature(block_text));
+    } else if is_function(block_text) {
         emit_function(node, emitter);
-    } else if is_impl_or_mod_item(text) {
-        emit_braced_item(node, Context::Block, emitter, lower_signature(text));
+    } else if is_impl_or_mod_item(block_text) {
+        emit_braced_item(node, Context::Block, emitter, lower_signature(block_text));
     } else {
         let (text, has_explicit_semicolon) = strip_explicit_semicolon(text);
-        if is_match(text) {
+        let (block_text, _) = strip_block_marker(text);
+        if is_match(block_text) {
             emit_braced_item_statement(
                 node,
                 Context::Match,
                 emitter,
-                lower_expr(text),
+                lower_expr(block_text),
                 has_explicit_semicolon,
             );
-        } else if is_control(text) {
+        } else if is_control(block_text) {
             emit_braced_item_statement(
                 node,
                 Context::Block,
                 emitter,
-                lower_expr(text),
+                lower_expr(block_text),
                 has_explicit_semicolon,
             );
         } else if looks_like_struct_literal(node) {
-            emit_struct_literal_expr(node, text, emitter, is_last && !has_explicit_semicolon);
+            emit_struct_literal_expr(
+                node,
+                block_text,
+                emitter,
+                is_last && !has_explicit_semicolon,
+            );
         } else {
             emit_statement(node, context, is_last, emitter);
         }
@@ -1304,7 +1364,8 @@ fn emit_braced_item_statement(
     has_explicit_semicolon: bool,
 ) {
     let indent = spaces(node.indent);
-    let header = strip_open_brace(&header);
+    let (header, _) = strip_block_marker(&header);
+    let header = strip_open_brace(header);
     if node.children.is_empty() && matches!(child_context, Context::Struct | Context::Enum) {
         emitter.push(node, format!("{}{};", indent, header));
         return;
@@ -1320,14 +1381,20 @@ fn emit_braced_item_statement(
 
 fn emit_function(node: &Node, emitter: &mut Emitter) {
     let text = node.text.trim();
+    let (text, _) = strip_block_marker(text);
+    let indent = spaces(node.indent);
     let Some((signature, body)) = split_once_top_level(text, '=') else {
-        emitter.push(
-            node,
-            format!("{}{}", spaces(node.indent), lower_signature(text)),
-        );
+        if node.children.is_empty() {
+            emitter.push(node, format!("{}{}", indent, lower_signature(text)));
+        } else {
+            let signature = strip_open_brace(text.trim());
+            let returns_value = function_returns_value(signature);
+            emitter.push(node, format!("{}{} {{", indent, lower_signature(signature)));
+            emit_function_body(&node.children, returns_value, emitter);
+            emitter.push_generated(format!("{}}}", indent));
+        }
         return;
     };
-    let indent = spaces(node.indent);
     let signature = signature.trim();
     let returns_value = function_returns_value(signature);
     emitter.push(node, format!("{}{} {{", indent, lower_signature(signature)));
@@ -1368,6 +1435,7 @@ fn emit_function_body(nodes: &[Node], returns_value: bool, emitter: &mut Emitter
 fn emit_statement(node: &Node, _context: Context, is_last: bool, emitter: &mut Emitter) {
     let indent = spaces(node.indent);
     let (text, has_explicit_semicolon) = strip_explicit_semicolon(node.text.trim());
+    let (block_text, _) = strip_block_marker(text);
     if !node.children.is_empty() && are_continuations(&node.children) {
         emitter.push(node, format!("{}{}", indent, lower_expr(text)));
         emit_continuations(
@@ -1389,16 +1457,21 @@ fn emit_statement(node: &Node, _context: Context, is_last: bool, emitter: &mut E
         emitter.push(node, format!("{}{};", indent, lower_signature(text)));
     } else if is_let(text) || is_assignment(text) || is_jump_statement(text) {
         emitter.push(node, format!("{}{};", indent, lower_expr(text)));
-    } else if !node.children.is_empty() && is_control(text) {
+    } else if !node.children.is_empty() && is_control(block_text) {
         emit_braced_item_statement(
             node,
             Context::Block,
             emitter,
-            lower_expr(text),
+            lower_expr(block_text),
             has_explicit_semicolon,
         );
     } else if !node.children.is_empty() && looks_like_struct_literal(node) {
-        emit_struct_literal_expr(node, text, emitter, is_last && !has_explicit_semicolon);
+        emit_struct_literal_expr(
+            node,
+            block_text,
+            emitter,
+            is_last && !has_explicit_semicolon,
+        );
     } else {
         let suffix = if is_last && !has_explicit_semicolon {
             ""
@@ -1491,23 +1564,16 @@ fn emit_struct_member(node: &Node, emitter: &mut Emitter) {
 }
 
 fn emit_enum_member(node: &Node, emitter: &mut Emitter) {
+    let (text, _) = strip_block_marker(node.text.trim());
     if node.children.is_empty() {
         emitter.push(
             node,
-            format!(
-                "{}{},",
-                spaces(node.indent),
-                lower_field_or_variant(node.text.trim())
-            ),
+            format!("{}{},", spaces(node.indent), lower_field_or_variant(text)),
         );
     } else {
         emitter.push(
             node,
-            format!(
-                "{}{} {{",
-                spaces(node.indent),
-                lower_field_or_variant(node.text.trim())
-            ),
+            format!("{}{} {{", spaces(node.indent), lower_field_or_variant(text)),
         );
         emit_nodes(&node.children, Context::Struct, emitter);
         emitter.push_generated(format!("{}}},", spaces(node.indent)));
@@ -1516,12 +1582,13 @@ fn emit_enum_member(node: &Node, emitter: &mut Emitter) {
 
 fn emit_trait_member(node: &Node, emitter: &mut Emitter) {
     let text = node.text.trim();
-    if is_function(text) && text.contains('=') {
+    let (block_text, _) = strip_block_marker(text);
+    if is_function(block_text) && (text.contains('=') || !node.children.is_empty()) {
         emit_function(node, emitter);
-    } else if is_function(text) {
+    } else if is_function(block_text) {
         emitter.push(
             node,
-            format!("{}{};", spaces(node.indent), lower_signature(text)),
+            format!("{}{};", spaces(node.indent), lower_signature(block_text)),
         );
     } else {
         emit_general(node, Context::Trait, true, emitter);
@@ -1530,7 +1597,8 @@ fn emit_trait_member(node: &Node, emitter: &mut Emitter) {
 
 fn emit_match_arm(node: &Node, emitter: &mut Emitter) {
     let indent = spaces(node.indent);
-    if let Some((pattern, expr)) = split_arrow(node.text.trim()) {
+    let (text, _) = strip_block_marker(node.text.trim());
+    if let Some((pattern, expr)) = split_arrow(text) {
         let pattern = lower_expr(pattern.trim());
         let expr = expr.trim();
         let (expr, has_explicit_semicolon) = strip_explicit_semicolon(expr);
@@ -1552,10 +1620,7 @@ fn emit_match_arm(node: &Node, emitter: &mut Emitter) {
         let (text, _) = strip_explicit_semicolon(node.text.trim());
         emitter.push(node, format!("{}{},", indent, lower_expr(text)));
     } else {
-        emitter.push(
-            node,
-            format!("{}{} => {{", indent, lower_expr(node.text.trim())),
-        );
+        emitter.push(node, format!("{}{} => {{", indent, lower_expr(text)));
         emit_nodes(&node.children, Context::Block, emitter);
         emitter.push_generated(format!("{}}},", indent));
     }
@@ -1563,7 +1628,8 @@ fn emit_match_arm(node: &Node, emitter: &mut Emitter) {
 
 fn emit_macro_arm(node: &Node, emitter: &mut Emitter) {
     let indent = spaces(node.indent);
-    if let Some((pattern, expr)) = split_arrow(node.text.trim()) {
+    let (text, _) = strip_block_marker(node.text.trim());
+    if let Some((pattern, expr)) = split_arrow(text) {
         let pattern = pattern.trim();
         let expr = expr.trim();
         if expr.is_empty() {
@@ -1577,12 +1643,13 @@ fn emit_macro_arm(node: &Node, emitter: &mut Emitter) {
             );
         }
     } else {
-        emitter.push(node, format!("{}{};", indent, lower_expr(node.text.trim())));
+        emitter.push(node, format!("{}{};", indent, lower_expr(text)));
     }
 }
 
 fn emit_struct_literal_expr(node: &Node, text: &str, emitter: &mut Emitter, is_last: bool) {
     let indent = spaces(node.indent);
+    let (text, _) = strip_block_marker(text);
     emitter.push(node, format!("{}{} {{", indent, lower_expr(text)));
     emit_nodes(&node.children, Context::StructLiteral, emitter);
     emitter.push_generated(format!("{}}}{}", indent, if is_last { "" } else { ";" }));
@@ -2200,11 +2267,11 @@ mod tests {
     fn lowers_struct_impl_and_inline_functions() {
         let source = r#"
 #[derive(Debug, Clone)]
-pub struct User
+pub struct User:
     pub id: u64
     pub name: String
 
-impl User
+impl User:
     pub fn new(id: u64, name: String) -> Self = Self{ id, name }
 
     pub fn display_name(&self) -> &str = &self.name
@@ -2232,9 +2299,9 @@ impl User {
     #[test]
     fn lowers_explicit_semicolons_and_match_arms() {
         let source = r#"
-fn parse(line: &str) -> Result[i32, String] =
-    match line.parse[i32]()
-        Ok(value)
+fn parse(line: &str) -> Result[i32, String]:
+    match line.parse[i32]():
+        Ok(value):
             println!("{}", value);
             Ok(value)
         Err(error) => Err(error.to_string())
@@ -2258,14 +2325,14 @@ fn parse(line: &str) -> Result[i32, String] =
     #[test]
     fn lowers_generic_impl_and_inline_semicolon_match_arm() {
         let source = r#"
-pub struct Boxed[T]
+pub struct Boxed[T]:
     pub value: T
 
-impl[T] Boxed[T]
+impl[T] Boxed[T]:
     pub fn new(value: T) -> Self = Self{ value }
 
-fn log(value: Result[i32, String]) =
-    match value
+fn log(value: Result[i32, String]):
+    match value:
         Ok(number) => println!("{}", number);
         Err(error) => error
 "#;
@@ -2295,7 +2362,7 @@ fn log(value: Result<i32, String>) {
     #[test]
     fn preserves_value_dots_and_lowers_path_dots() {
         let source = r#"
-fn test(iter: Iter) =
+fn test(iter: Iter):
     Foo.new();
     Foo::bar();
     iter.collect::<Vec[_]>();
@@ -2317,7 +2384,7 @@ fn test(iter: Iter) =
     #[test]
     fn keeps_index_expressions_numeric() {
         let source = r#"
-fn example(xs: &[i32], index: usize) -> i32 =
+fn example(xs: &[i32], index: usize) -> i32:
     let a = [Foo]
     let b = [3]
     let c = xs[3]
@@ -2343,7 +2410,7 @@ fn example(xs: &[i32], index: usize) -> i32 =
     #[test]
     fn lowers_if_then_else_expression() {
         let source = r#"
-fn clamp(value: i32, min: i32, max: i32) -> i32 =
+fn clamp(value: i32, min: i32, max: i32) -> i32:
     if value < min then min else if value > max then max else value
 "#;
 
@@ -2367,10 +2434,10 @@ fn clamp(value: i32, min: i32, max: i32) -> i32 =
     #[test]
     fn infers_unit_function_tail_statement() {
         let source = r#"
-pub fn main() =
+pub fn main():
     println!("hello")
 
-pub fn id(value: i32) -> i32 =
+pub fn id(value: i32) -> i32:
     value
 "#;
 
@@ -2389,7 +2456,7 @@ pub fn id(value: i32) -> i32 {
     #[test]
     fn preserves_comment_indentation() {
         let source = r#"
-fn demo() =
+fn demo():
     // A trailing semicolon explicitly discards the value.
     println!("hi");
 "#;
@@ -2437,14 +2504,14 @@ fn discarded_units(values: &[i32]) -> Vec<()> {
     #[test]
     fn explicit_semicolon_discards_multiline_block_expression() {
         let source = r#"
-struct Foo
+struct Foo:
     x: i32
 
-fn demo(value: Option[i32]) =
-    match value;
+fn demo(value: Option[i32]):
+    match value:;
         Some(number) => number
         None => 0
-    Foo;
+    Foo:;
         x = 1
 "#;
 
@@ -2496,10 +2563,10 @@ pub fn normalized_names(lines: Vec[String]) -> Vec[String] = lines
     #[test]
     fn lowers_macro_rules_items() {
         let source = r#"
-macro_rules! make_message
+macro_rules! make_message:
     ($name:expr) => format!("hello {}", $name)
 
-pub fn demo() -> String =
+pub fn demo() -> String:
     make_message!("Ada")
 "#;
 
@@ -2547,7 +2614,7 @@ fn id(value: i32) -> i32 {
         );
         assert!(ruk_to_rusk(&ruk).unwrap().contains("let user = User.new"));
         assert!(
-            rusk_to_ruk("fn main() =\n    println!(\"hello\")\n")
+            rusk_to_ruk("fn main():\n    println!(\"hello\")\n")
                 .unwrap()
                 .contains("println!(\"hello\")")
         );
@@ -2700,18 +2767,18 @@ pub fn main() {
         assert_eq!(
             rust_to_rusk(source).unwrap(),
             r#"#[derive(Debug, Clone)]
-pub struct User
+pub struct User:
     pub id: u64
     pub name: String
 
-impl User
-    pub fn new(id: u64, name: String) -> Self =
+impl User:
+    pub fn new(id: u64, name: String) -> Self:
         Self { id, name }
 
-    pub fn display_name(&self) -> &str =
+    pub fn display_name(&self) -> &str:
         &self.name
 
-pub fn main() =
+pub fn main():
     let user = User.new(1, "Ada".to_string())
     println!("{}", user.display_name());
 "#
@@ -2723,6 +2790,14 @@ pub fn main() =
         assert_eq!(
             rust_to_rusk("fn main() { println!(\"hi\"); }\n").unwrap(),
             "fn main() { println!(\"hi\"); }\n"
+        );
+    }
+
+    #[test]
+    fn transpiles_multiline_rust_function_blocks() {
+        assert_eq!(
+            rust("fn main() {\n    println!(\"hi\");\n}\n"),
+            "fn main() {\n    println!(\"hi\");\n}\n"
         );
     }
 
@@ -2771,14 +2846,14 @@ pub fn parse(raw: &str) -> Option<(i32, i32)> {
 
         assert_eq!(
             rust_to_rusk(source).unwrap(),
-            r#"pub struct Boxed[T]
+            r#"pub struct Boxed[T]:
     pub value: T
 
-impl[T] Boxed[T]
-    pub fn new(value: T) -> Self =
+impl[T] Boxed[T]:
+    pub fn new(value: T) -> Self:
         Self { value }
 
-pub fn parse(raw: &str) -> Option[(i32, i32)] =
+pub fn parse(raw: &str) -> Option[(i32, i32)]:
     let (left, right) = raw.split_once(',')?
     let left = left.trim().parse[i32]().ok()?
     let right = right.trim().parse[i32]().ok()?
@@ -2814,7 +2889,7 @@ pub fn normalized_names(lines: Vec<String>) -> Vec<String> {
 
     #[test]
     fn formats_without_reflowing_line_break_style() {
-        let inline = "pub fn even_squares(values: Vec[i32]) -> Vec[i32] =\n    values.into_iter().filter(|value| value % 2 == 0).map(|value| value * value).collect[Vec[i32]]()\n";
+        let inline = "pub fn even_squares(values: Vec[i32]) -> Vec[i32]:\n    values.into_iter().filter(|value| value % 2 == 0).map(|value| value * value).collect[Vec[i32]]()\n";
         let broken = "pub fn even_squares(values: Vec[i32]) -> Vec[i32] = values\n    .into_iter()\n    .filter(|value| value % 2 == 0)\n    .map(|value| value * value)\n    .collect[Vec[i32]]()\n";
 
         assert_eq!(
@@ -2895,13 +2970,10 @@ pub fn normalized_names(lines: Vec<String>) -> Vec<String> {
     #[test]
     fn rejects_unsupported_indented_expression_blocks() {
         let error =
-            transpile("fn main() =\n    println!(\"first\")\n        println!(\"nested\")\n")
+            transpile("fn main():\n    println!(\"first\")\n        println!(\"nested\")\n")
                 .unwrap_err();
         assert_eq!(error.line, 2);
-        assert_eq!(
-            error.message,
-            "unsupported indented block after this expression"
-        );
+        assert_eq!(error.message, "indented blocks require `:`");
     }
 
     #[test]
@@ -2910,13 +2982,13 @@ pub fn normalized_names(lines: Vec<String>) -> Vec<String> {
         assert_eq!(error.line, 1);
         assert_eq!(
             error.message,
-            "inline function bodies cannot own indented blocks; move the body below `=` or use method-chain continuations"
+            "inline function bodies cannot own indented blocks; move the body below `:` or use method-chain continuations"
         );
     }
 
     #[test]
     fn rejects_inline_match_arm_with_children() {
-        let error = transpile("fn id(value: i32) -> i32 =\n    match value\n        0 => 1\n            println!(\"ignored\")\n        _ => value\n")
+        let error = transpile("fn id(value: i32) -> i32:\n    match value:\n        0 => 1\n            println!(\"ignored\")\n        _ => value\n")
             .unwrap_err();
         assert_eq!(error.line, 3);
         assert_eq!(
@@ -2928,7 +3000,7 @@ pub fn normalized_names(lines: Vec<String>) -> Vec<String> {
     #[test]
     fn format_rejects_unsupported_blocks() {
         let error = format_source(
-            "fn main() =\n    println!(\"first\")\n        println!(\"nested\")\n",
+            "fn main():\n    println!(\"first\")\n        println!(\"nested\")\n",
             FormatOptions::default(),
         )
         .unwrap_err();

@@ -1378,7 +1378,7 @@ mod tests {
 
     #[test]
     fn completions_include_document_symbols() {
-        let items = completion_items("pub struct User\npub fn greet(user: User) = user\n");
+        let items = completion_items("pub struct User:\npub fn greet(user: User) = user\n");
 
         assert!(items.iter().any(|item| item.label == "User"));
         assert!(items.iter().any(|item| item.label == "greet"));
