@@ -4,9 +4,9 @@ pub fn even_squares(values: Vec[i32]) -> Vec[i32] = values
     .map(|value| value * value)
     .collect[Vec[i32]]()
 
-pub fn joined(values: &[&str]) -> String =
+pub fn joined(values: &[&str]) -> String:
     values.iter().copied().collect[Vec[&str]]().join(",")
 
-pub fn main() =
+pub fn main():
     println!("{:?}", even_squares(vec![1, 2, 3, 4]))
     println!("{}", joined(&["a", "b"]))

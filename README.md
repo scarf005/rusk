@@ -8,15 +8,15 @@
 
 ```rsk
 #[derive(Debug, Clone)]
-pub struct User
+pub struct User:
     pub id: u64
     pub name: String
 
-impl User
+impl User:
     pub fn new(id: u64, name: String) -> Self = Self{ id, name }
     pub fn display_name(&self) -> &str = &self.name
 
-pub fn main() =
+pub fn main():
     let user = User.new(1, "Ada".to_string())
     println!("{}", user.display_name())
 ```
@@ -61,9 +61,9 @@ just web # open web editor
 
 ## Supported MVP syntax
 
-- indentation blocks for `struct`, `enum`, `trait`, `impl`, `mod`, `macro_rules!`, `fn`, `if`, `else`, `match`, loops, `unsafe`, and `async`
-- optional opening braces on indented blocks, including inline multiline closures
-- function bodies with `=`
+- `:`-marked indentation blocks for `struct`, `enum`, `trait`, `impl`, `mod`, `macro_rules!`, `fn`, `if`, `else`, `match`, loops, `unsafe`, and `async`
+- optional opening braces on `:`-marked indented blocks, plus Rust `{` blocks as an escape hatch
+- single-expression function shorthand with `=`, e.g. `fn id(value: i32) -> i32 = value`
 - `if condition then expr else expr` expressions
 - Rust-style inline struct literals, e.g. `Self{ id, name }`
 - trailing `;` for explicit semicolon/discard statements when inference is not enough

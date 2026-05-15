@@ -1,10 +1,10 @@
-pub struct ArrayBox[T, const N: usize]
+pub struct ArrayBox[T, const N: usize]:
     pub items: [T; N]
 
-impl[T, const N: usize] ArrayBox[T, N]
+impl[T, const N: usize] ArrayBox[T, N]:
     pub fn new(items: [T; N]) -> Self = Self{ items }
     pub fn len(&self) -> usize = N
 
-pub fn main() =
+pub fn main():
     let array_box = ArrayBox.new([1, 2, 3])
     println!("{}", array_box.len())

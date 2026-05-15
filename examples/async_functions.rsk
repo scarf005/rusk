@@ -1,7 +1,7 @@
 pub async fn fetch_number() -> i32 = 42
 
-pub async fn combine(left: i32, right: i32) -> i32 =
+pub async fn combine(left: i32, right: i32) -> i32:
     left + right
 
-pub fn main() =
+pub fn main():
     println!("async functions defined")

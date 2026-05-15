@@ -362,7 +362,7 @@ mod tests {
         let project = temp_project("cargo-sources");
         let source_path = project.join("src/main.rsk");
         let rust_path = project.join("src/main.rs");
-        fs::write(&source_path, "pub fn main() =\n    println!(\"hello\")\n").unwrap();
+        fs::write(&source_path, "pub fn main():\n    println!(\"hello\")\n").unwrap();
 
         let generated = transpile_cargo_sources(&project).unwrap();
         assert_eq!(generated, vec![rust_path.clone()]);
@@ -379,7 +379,7 @@ mod tests {
         let mut permissions = fs::metadata(&rust_path).unwrap().permissions();
         permissions.set_readonly(false);
         fs::set_permissions(&rust_path, permissions).unwrap();
-        fs::write(&source_path, "pub fn main() =\n    println!(\"cached\")\n").unwrap();
+        fs::write(&source_path, "pub fn main():\n    println!(\"cached\")\n").unwrap();
         let generated = transpile_cargo_sources(&project).unwrap();
         assert_eq!(generated, vec![rust_path.clone()]);
         let rust = fs::read_to_string(&rust_path).unwrap();
